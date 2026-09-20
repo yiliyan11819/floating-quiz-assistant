@@ -11,11 +11,36 @@ body {
   user-select: none;
 }
 
+/* 冻结的屏幕画面（框选模式的背景） */
+#backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-color: #0a0c14;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+}
+
+body.frozen {
+  background: #0a0c14;
+}
+
+#backdrop.failed::after {
+  content: '没能取到屏幕画面，请按 ESC 重试';
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: #e6e7ec;
+  font-size: 14px;
+}
+
 #dim {
   position: fixed;
   inset: 0;
+  z-index: 1;
   background: rgba(10, 12, 20, 0.42);
-  backdrop-filter: saturate(0.85);
 }
 
 #dim.hidden,
@@ -140,24 +165,11 @@ body.dragging .hint {
 }
 
 /* ==========================================================================
-   不透明降级模式（body.opaque）
+   说明：遮罩窗口永远是不透明的
    ==========================================================================
-   关掉硬件加速时窗口不能透明（软件渲染下透明窗口会变成纯黑，把整块显示器糊死），
-   改成：窗口本身铺一层深色，再靠**窗口级 opacity** 让桌面透出来。
-   代价是失去了「逐像素挖洞」的能力，所以：
-     - #dim 必须关掉，不然会和窗口透明度叠加成两层压暗
-     - .sel 的 9999px 外发光阴影（挖洞手法）同样失效，改为只留描边 */
-body.opaque {
-  background: #0a0c14;
-}
-
-body.opaque #dim {
-  display: none;
-}
-
-body.opaque .sel {
-  border-width: 2px;
-  background: rgba(124, 123, 255, 0.08);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
-}
+   背景是主进程开窗之前拍下的冻结截图，所以不需要、也不能用 transparent。
+   （透明 + 置顶 + 全屏的窗口会把播放器的硬件视频叠加层挤掉，
+     表现为「框选时视频整块变黑」。）
+   拖拽前：#dim 单层压暗；拖拽中：改由 .sel 的 9999px 外发光压暗，
+   选区里保持原始亮度，于是选区天然「提亮」出来。 */
 

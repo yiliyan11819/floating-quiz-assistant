@@ -23,6 +23,7 @@ const INVOKE_CHANNELS = [
   'solve:cancel',
   'pick:open',
   'pick:report',
+  'pick:backdrop',
   'chat:send',
   'window:collapse',
   'window:hide',
@@ -32,12 +33,19 @@ const INVOKE_CHANNELS = [
   'cache:list',
   'cache:clear',
   'notebook:list',
+  'notebook:add',
   'notebook:remove',
+  'notebook:setCategory',
   'notebook:clear',
   'notebook:export',
+  'categories:list',
+  'categories:add',
+  'categories:rename',
+  'categories:remove',
   'ui:openSettings',
   'ui:openNotebook',
   'ui:openExternal',
+  'clipboard:write',
 ] as const;
 
 const EVENT_CHANNELS = [

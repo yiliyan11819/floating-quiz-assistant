@@ -17,6 +17,7 @@ import {
 import path from 'node:path';
 import { Region } from '../shared/types';
 import { transparentOk } from './gpu';
+import { freezeScreens, FrozenScreen } from './capture';
 
 const PRELOAD = path.join(__dirname, '..', 'main', 'preload.js');
 const RENDERER = path.join(__dirname, '..', 'renderer');
@@ -43,6 +44,8 @@ export class WindowManager {
   private pickerResolve: ((r: Region | null) => void) | null = null;
   private pickerHint = '';
   private quitting = false;
+  /** 框选开始前拍下的静止画面，displayId → 帧 */
+  private frozen = new Map<number, FrozenScreen>();
 
   /* ------------------------------------------------------------ */
   /* 浮窗                                                          */
@@ -140,30 +143,41 @@ export class WindowManager {
   /* ------------------------------------------------------------ */
 
   /**
-   * 打开全屏半透明框选遮罩（每块屏幕一个），返回用户选中的区域（DIP）。
+   * 打开全屏框选遮罩（每块屏幕一个），返回用户选中的区域（DIP）。
    * 用户按 ESC 或右键取消则返回 null。
+   *
+   * ★ 遮罩是「不透明 + 背景是刚拍下的冻结截图」，不是透明窗口。
+   *   原因见 capture.ts 里 FrozenScreen 的注释：透明置顶窗口会把播放器的
+   *   硬件视频叠加层挤掉，导致框选时视频整块变黑。
    */
-  openRegionPicker(hint: string): Promise<Region | null> {
+  async openRegionPicker(hint: string): Promise<Region | null> {
     // 已经有遮罩开着就先关掉
     this.closeOverlays();
+    this.frozen.clear();
+
+    // ★ 顺序很重要：先截图，再开遮罩窗口。
+    //   反过来的话窗口会挡住屏幕，截出来就是一片遮罩底色。
+    const frames = await freezeScreens();
+    if (!frames.length) {
+      throw new Error('拿不到屏幕画面，无法框选（可以先用「识别本页」）');
+    }
+    for (const f of frames) this.frozen.set(f.displayId, f);
 
     return new Promise<Region | null>((resolve) => {
       this.pickerResolve = resolve;
       this.pickerHint = hint;
 
-      const displays = screen.getAllDisplays();
+      const displays = screen.getAllDisplays().filter((d) => this.frozen.has(d.id));
       for (const d of displays) {
-        // 同上：没有 GPU 合成时不能用透明窗口，否则整块屏幕会被画成纯黑，
-        // 这块遮罩还是一屏一个、alwaysOnTop('screen-saver')，等于把显示器糊死。
-        const transparent = transparentOk();
         const win = new BrowserWindow({
           x: d.bounds.x,
           y: d.bounds.y,
           width: d.bounds.width,
           height: d.bounds.height,
           frame: false,
-          transparent,
-          backgroundColor: transparent ? '#00000000' : opaqueBackground(),
+          transparent: false,
+          // 截图到位前先铺这个底色，避免闪一下白
+          backgroundColor: '#0a0c14',
           resizable: false,
           movable: false,
           minimizable: false,
@@ -183,16 +197,11 @@ export class WindowManager {
         });
         win.setAlwaysOnTop(true, 'screen-saver');
         win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-        if (!transparent) {
-          // 不透明模式下没法逐像素挖洞，退而求其次：整窗统一半透明，
-          // 桌面依然看得见，框选照样能用（只是少了「选中区域更亮」的对比）。
-          win.setOpacity(0.42);
-        }
         win.loadFile(path.join(RENDERER, 'overlay.html'), {
           query: {
             hint: encodeURIComponent(hint),
             displayId: String(d.id),
-            opaque: transparent ? '0' : '1',
+            frozen: '1',
           },
         });
         win.once('ready-to-show', () => {
@@ -209,26 +218,37 @@ export class WindowManager {
     });
   }
 
+  /** 遮罩页取自己那块屏的冻结截图（当背景） */
+  backdropFor(displayId: number): string | null {
+    return this.frozen.get(displayId)?.backdrop ?? null;
+  }
+
+  /** 拿某块屏的冻结帧，用于从静止画面里裁剪选区 */
+  frameFor(displayId: number): FrozenScreen | null {
+    return this.frozen.get(displayId) ?? null;
+  }
+
+  /** 主进程最后一块屏（拿不到指定屏时的兜底） */
+  anyFrame(): FrozenScreen | null {
+    for (const f of this.frozen.values()) return f;
+    return null;
+  }
+
+  /** 用完之后把冻结帧放掉，别一直占着几十 MB 内存 */
+  releaseFrozen(): void {
+    this.frozen.clear();
+  }
+
   /** 由 IPC 调用：用户选完了 */
   finishPick(region: Region | null): void {
     const resolve = this.pickerResolve;
     this.pickerResolve = null;
     if (!resolve) return;
 
-    if (!region) {
-      this.closeOverlays();
-      resolve(null);
-      return;
-    }
-
-    // ★ 关键：先隐藏遮罩再截图，否则半透明遮罩会被拍进画面里
-    for (const w of this.overlayWins) {
-      if (!w.isDestroyed()) w.hide();
-    }
-    setTimeout(() => {
-      this.closeOverlays();
-      resolve(region);
-    }, 180);
+    // 冻结帧模式下不再需要「先隐藏遮罩再截图」，
+    // 选区直接从已经拍好的静止画面里裁。
+    this.closeOverlays();
+    resolve(region);
   }
 
   isPickerOpen(): boolean {

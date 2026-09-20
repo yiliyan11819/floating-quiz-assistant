@@ -115,6 +115,18 @@
           <button id="btnPause" class="hidden">暂停</button>
           <button id="btnReanswer" class="hidden">重新回答</button>
           <button id="btnCancel" class="hidden">停止</button>
+          <button id="btnCollect" class="ghost" title="把当前这道题收进错题本（不用先追问）">
+            ☆ 收藏
+          </button>
+          <select id="collectCat" class="cat-select" title="收藏到哪个分类"></select>
+          <input
+            id="newCat"
+            class="cat-input hidden"
+            type="text"
+            maxlength="24"
+            placeholder="分类名，回车确认"
+            title="输入新的分类名，回车确认（Esc 取消）"
+          />
           <span class="flex-1"></span>
           <span id="meta" class="meta"></span>
         </div>
@@ -127,6 +139,11 @@
           <button id="btnSend" title="发送">发送</button>
         </div>
       </footer>
+
+      <!-- 选中答案里的文字时浮现：一键把这段引用进追问框 -->
+      <button id="quoteBtn" class="quote-btn hidden" title="把选中的内容引用到追问框">
+        ↩ 引用到追问
+      </button>
 
       <div id="grip" class="grip nodrag" title="拖动调整大小"></div>
     </section>

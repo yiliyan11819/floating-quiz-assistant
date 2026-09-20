@@ -28,6 +28,109 @@ function findDisplay(displayId?: number): Display {
   return screen.getPrimaryDisplay();
 }
 
+/**
+ * 冻结帧：框选模式下先把屏幕「拍下来」，再拿这张静态图当遮罩背景。
+ *
+ * 为什么不让遮罩直接透明地盖在桌面上？
+ *   bilibili / 腾讯课堂这类播放器走的是硬件视频叠加层（hardware overlay）。
+ *   一个全屏 + 置顶 + 透明的窗口盖上去，会把叠加层挤掉，
+ *   画面就变成纯黑 —— 但 desktopCapturer 抓到的原始帧其实是好的，
+ *   所以表现为「截图时视频变黑，识别结果却正常」。
+ *   把遮罩换成「不透明 + 背景是刚拍下的截图」，用户看到的画面一模一样，
+ *   却不再有任何透明窗口去和播放器抢图层。
+ *   顺带的好处：框选期间画面完全静止，选区域更准。
+ */
+export interface FrozenScreen {
+  displayId: number;
+  /** DIP 逻辑尺寸 */
+  dipWidth: number;
+  dipHeight: number;
+  /** 物理像素原图，裁剪时用 */
+  image: NativeImage;
+  scaleX: number;
+  scaleY: number;
+  /** 给遮罩窗口当背景用的 dataURL */
+  backdrop: string;
+}
+
+/** 一次性把所有（指定）显示器拍下来 */
+export async function freezeScreens(displayIds?: number[]): Promise<FrozenScreen[]> {
+  const all = screen.getAllDisplays();
+  const displays = displayIds?.length
+    ? all.filter((d) => displayIds.includes(d.id))
+    : all;
+  if (!displays.length) return [];
+
+  // 一次 getSources 抓全部屏幕，按最大屏的物理尺寸请求，避免逐屏重复抓取
+  const wantW = Math.max(...displays.map((d) => Math.round(d.size.width * d.scaleFactor)));
+  const wantH = Math.max(...displays.map((d) => Math.round(d.size.height * d.scaleFactor)));
+
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: wantW, height: wantH },
+    fetchWindowIcons: false,
+  });
+
+  const out: FrozenScreen[] = [];
+  for (const d of displays) {
+    let source = sources.find((s) => String(s.display_id) === String(d.id));
+    if (!source) {
+      const idx = all.findIndex((x) => x.id === d.id);
+      source = sources[idx] ?? sources[0];
+    }
+    if (!source || source.thumbnail.isEmpty()) continue;
+
+    const image = source.thumbnail;
+    const got = image.getSize();
+    out.push({
+      displayId: d.id,
+      dipWidth: d.bounds.width,
+      dipHeight: d.bounds.height,
+      image,
+      scaleX: got.width / d.bounds.width,
+      scaleY: got.height / d.bounds.height,
+      // 只作展示用，JPEG 足够，且体积远小于 PNG
+      backdrop: `data:image/jpeg;base64,${image.toJPEG(82).toString('base64')}`,
+    });
+  }
+  return out;
+}
+
+/** 从冻结帧里裁出用户选中的区域 */
+export function cropFrozen(frozen: FrozenScreen, region: Region): CapturedFrame {
+  const r: Region = {
+    x: region.x,
+    y: region.y,
+    width: region.width,
+    height: region.height,
+    displayId: frozen.displayId,
+  };
+  return cropNative(frozen.image, frozen.scaleX, frozen.scaleY, r);
+}
+
+/** 把物理像素图按 DIP 区域裁下来 */
+function cropNative(
+  image: NativeImage,
+  scaleX: number,
+  scaleY: number,
+  region: Region
+): CapturedFrame {
+  const size = image.getSize();
+  const x = clampNum(Math.round(region.x * scaleX), 0, size.width - 1);
+  const y = clampNum(Math.round(region.y * scaleY), 0, size.height - 1);
+  const w = clampNum(Math.round(region.width * scaleX), 1, size.width - x);
+  const h = clampNum(Math.round(region.height * scaleY), 1, size.height - y);
+
+  const cropped = image.crop({ x, y, width: Math.max(1, w), height: Math.max(1, h) });
+  const got = cropped.getSize();
+  return {
+    image: cropped,
+    region,
+    physicalWidth: got.width,
+    physicalHeight: got.height,
+  };
+}
+
 /** 取某个显示器的整屏原始截图（物理像素） */
 async function captureDisplayNative(display: Display): Promise<{
   image: NativeImage;
@@ -81,20 +184,7 @@ export async function captureRegion(region?: Region | null, fallbackDisplayId?: 
     displayId: display.id,
   };
 
-  // 夹到屏幕范围内，避免用户拖出去导致 crop 抛错
-  const x = clampNum(Math.round(r.x * scaleX), 0, image.getSize().width - 1);
-  const y = clampNum(Math.round(r.y * scaleY), 0, image.getSize().height - 1);
-  const w = clampNum(Math.round(r.width * scaleX), 1, image.getSize().width - x);
-  const h = clampNum(Math.round(r.height * scaleY), 1, image.getSize().height - y);
-
-  const cropped = image.crop({ x, y, width: Math.max(1, w), height: Math.max(1, h) });
-  const size = cropped.getSize();
-  return {
-    image: cropped,
-    region: r,
-    physicalWidth: size.width,
-    physicalHeight: size.height,
-  };
+  return cropNative(image, scaleX, scaleY, r);
 }
 
 /** 按长边限制缩放，并压成 JPEG 的 dataURL（需求 §6 SHOULD：降延迟与 token） */

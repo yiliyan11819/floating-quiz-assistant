@@ -18,6 +18,29 @@ import {
 
 const ENC_PREFIX = 'enc:v1:';
 
+/** 汉明距离阈值上限（64 位哈希，再高就失去区分能力了） */
+export const HAMMING_MAX = 32;
+
+/** 旧版本默认阈值；这一版把它提高，见下面 Store 构造函数里的迁移 */
+const LEGACY_HAMMING_DEFAULT = 4;
+
+/** 分类名清洗：去空白、去空串、去重、长度限制 */
+export function normalizeCategories(list: unknown): string[] {
+  if (!Array.isArray(list)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of list) {
+    if (typeof raw !== 'string') continue;
+    const name = raw.trim().slice(0, 24);
+    if (!name || name === '未分类') continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+    if (out.length >= 50) break;
+  }
+  return out;
+}
+
 function userData(): string {
   return app.getPath('userData');
 }
@@ -94,10 +117,28 @@ export class Store {
     merged.apiKey = decryptSecret((raw.apiKey as string) || '');
     // 订阅号免费额度之外，用户可能填了带空格的 key
     merged.apiKey = merged.apiKey.trim();
+
+    // 兼容更早的配置：那时候阈值默认是 4，偏保守，同一道题稍微变一点就会被
+    // 当成新题重新调 API。用户没有手动改过的话，跟着新默认一起抬到 8。
+    if (raw.hammingThreshold === LEGACY_HAMMING_DEFAULT) {
+      merged.hammingThreshold = DEFAULT_SETTINGS.hammingThreshold;
+    }
+    merged.hammingThreshold = clamp(merged.hammingThreshold, 0, HAMMING_MAX);
+    merged.notebookCategories = normalizeCategories(merged.notebookCategories);
+    if (
+      merged.lastNotebookCategory &&
+      !merged.notebookCategories.includes(merged.lastNotebookCategory)
+    ) {
+      merged.lastNotebookCategory = '';
+    }
     this.settings = merged;
 
     this.cache = readJson<CacheEntry[]>(filePath('cache.json'), []);
-    this.notebook = readJson<NotebookEntry[]>(filePath('notebook.json'), []);
+    this.notebook = readJson<NotebookEntry[]>(filePath('notebook.json'), []).map((e) => ({
+      ...e,
+      // 老数据没有 category 字段
+      category: typeof e.category === 'string' ? e.category : '',
+    }));
   }
 
   /* ---------------- settings ---------------- */
@@ -119,11 +160,21 @@ export class Store {
     // 防呆：把几个关键数值夹到合理区间，避免用户手填出 0 或负数把自动模式卡死
     next.staticMs = clamp(next.staticMs, 300, 10000);
     next.pollMs = clamp(next.pollMs, 200, 3000);
-    next.hammingThreshold = clamp(next.hammingThreshold, 0, 16);
+    next.hammingThreshold = clamp(next.hammingThreshold, 0, HAMMING_MAX);
     next.cooldownMs = clamp(next.cooldownMs, 5000, 300000);
     next.jpegQuality = clamp(next.jpegQuality, 40, 100);
     next.maxEdge = clamp(next.maxEdge, 0, 4096);
     next.opacity = clamp(next.opacity, 0.4, 1);
+    if (patch.notebookCategories !== undefined) {
+      next.notebookCategories = normalizeCategories(patch.notebookCategories);
+    }
+    if (typeof next.lastNotebookCategory !== 'string') next.lastNotebookCategory = '';
+    if (
+      next.lastNotebookCategory &&
+      !next.notebookCategories.includes(next.lastNotebookCategory)
+    ) {
+      next.lastNotebookCategory = '';
+    }
     if (typeof next.apiKey === 'string') next.apiKey = next.apiKey.trim();
     this.settings = next;
     this.persistSettings();
@@ -203,6 +254,7 @@ export class Store {
   addNotebook(entry: Omit<NotebookEntry, 'id' | 'createdAt'>): NotebookEntry {
     const full: NotebookEntry = {
       ...entry,
+      category: typeof entry.category === 'string' ? entry.category : '',
       id: crypto.randomUUID(),
       createdAt: Date.now(),
     };
@@ -222,10 +274,86 @@ export class Store {
       exist.answer = entry.answer || exist.answer;
       exist.thumb = entry.thumb || exist.thumb;
       exist.askedFollowUp = exist.askedFollowUp || entry.askedFollowUp;
+      // 已经分好类的不要被后来者清掉
+      if (!exist.category && entry.category) exist.category = entry.category;
       this.persistNotebook();
       return exist;
     }
     return this.addNotebook(entry);
+  }
+
+  /** 已收藏过同一题？返回那一条 */
+  findNotebookByHash(hash: string, threshold: number): NotebookEntry | null {
+    return this.notebook.find((e) => hammingHex(e.hash, hash) <= threshold) ?? null;
+  }
+
+  /** 手动改一条错题的分类 */
+  setNotebookCategory(id: string, category: string): NotebookEntry | null {
+    const hit = this.notebook.find((e) => e.id === id);
+    if (!hit) return null;
+    hit.category = typeof category === 'string' ? category.trim() : '';
+    this.persistNotebook();
+    return hit;
+  }
+
+  /* ---------------- 错题本分类 ---------------- */
+
+  listCategories(): string[] {
+    return [...this.settings.notebookCategories];
+  }
+
+  /** 新建分类；重名或为空返回 null */
+  addCategory(name: string): string[] {
+    const clean = (name || '').trim().slice(0, 24);
+    if (!clean || clean === '未分类') return this.listCategories();
+    const next = normalizeCategories([...this.settings.notebookCategories, clean]);
+    this.settings.notebookCategories = next;
+    this.persistSettings();
+    return this.listCategories();
+  }
+
+  /** 重命名分类，并同步改掉该分类下所有条目 */
+  renameCategory(from: string, to: string): string[] {
+    const clean = (to || '').trim().slice(0, 24);
+    if (!from || !clean || clean === '未分类') return this.listCategories();
+    const list = this.settings.notebookCategories.map((c) => (c === from ? clean : c));
+    this.settings.notebookCategories = normalizeCategories(list);
+    if (this.settings.lastNotebookCategory === from) {
+      this.settings.lastNotebookCategory = clean;
+    }
+    this.persistSettings();
+
+    let touched = false;
+    for (const e of this.notebook) {
+      if (e.category === from) {
+        e.category = clean;
+        touched = true;
+      }
+    }
+    if (touched) this.persistNotebook();
+    return this.listCategories();
+  }
+
+  /** 删除分类：分类下的题目移回「未分类」，不跟着一起删掉 */
+  removeCategory(name: string): string[] {
+    if (!name) return this.listCategories();
+    this.settings.notebookCategories = this.settings.notebookCategories.filter(
+      (c) => c !== name
+    );
+    if (this.settings.lastNotebookCategory === name) {
+      this.settings.lastNotebookCategory = '';
+    }
+    this.persistSettings();
+
+    let touched = false;
+    for (const e of this.notebook) {
+      if (e.category === name) {
+        e.category = '';
+        touched = true;
+      }
+    }
+    if (touched) this.persistNotebook();
+    return this.listCategories();
   }
 
   removeNotebook(id: string): void {

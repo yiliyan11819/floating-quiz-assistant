@@ -309,3 +309,129 @@ button.danger:hover:not(:disabled) {
 .empty-state b {
   color: var(--fg-muted);
 }
+
+/* ---------------- 错题本分类栏 ---------------- */
+
+.cat-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 0 12px;
+}
+
+.cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  font-size: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.cat-chip:hover {
+  background: var(--bg-soft);
+  color: var(--fg);
+}
+
+.cat-chip em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.cat-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cat-chip.active em {
+  color: var(--accent);
+  opacity: 0.75;
+}
+
+.cat-chip.add {
+  border-style: dashed;
+  background: transparent;
+  color: var(--accent);
+}
+
+/* 自定义分类：名字点筛选，✎ 改名，× 删除 */
+.cat-chip.cat-custom {
+  padding: 0 3px 0 0;
+  gap: 1px;
+}
+
+.cat-chip .cat-name {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  padding: 4px 2px 4px 11px;
+  cursor: pointer;
+}
+
+.cat-chip .cat-op {
+  border: none;
+  background: transparent;
+  color: var(--fg-faint);
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 4px 5px;
+  cursor: pointer;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.cat-chip.cat-custom:hover .cat-op {
+  opacity: 1;
+}
+
+.cat-chip .cat-op:hover {
+  background: var(--bg-sunken);
+  color: var(--fg);
+}
+
+.cat-chip .cat-op.danger:hover {
+  color: var(--danger);
+}
+
+.cat-edit-input {
+  width: 140px;
+  padding: 4px 11px;
+  font-size: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.note-actions {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.note-actions .cat-select {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+  max-width: 140px;
+}
+
+.note-actions .cat-select:hover {
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+

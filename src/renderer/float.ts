@@ -34,6 +34,10 @@ const els = {
   btnPause: $<HTMLButtonElement>('btnPause'),
   btnReanswer: $<HTMLButtonElement>('btnReanswer'),
   btnCancel: $<HTMLButtonElement>('btnCancel'),
+  btnCollect: $<HTMLButtonElement>('btnCollect'),
+  collectCat: $<HTMLSelectElement>('collectCat'),
+  newCat: $<HTMLInputElement>('newCat'),
+  quoteBtn: $<HTMLButtonElement>('quoteBtn'),
   btnSend: $<HTMLButtonElement>('btnSend'),
   ask: $<HTMLTextAreaElement>('ask'),
   meta: $('meta'),
@@ -145,6 +149,17 @@ function addEntry(kind: Entry['kind'], text: string, opts: { cached?: boolean; s
   } else {
     entry.renderer = createThrottledRenderer(body, 55);
     entry.renderer.update(text, !!opts.streaming);
+
+    // 解答块给个一键复制（复制的是 Markdown 原文，公式和代码都能带走）
+    if (kind === 'assistant') {
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'copy-btn';
+      copy.textContent = '复制';
+      copy.title = '复制这一整段（Markdown 原文）';
+      copy.onclick = () => void copyText(entry.text);
+      head.appendChild(copy);
+    }
   }
 
   entries.push(entry);
@@ -191,6 +206,177 @@ function showHint(text: string, kind: 'info' | 'warn' | 'danger' = 'info', ms = 
     window.clearTimeout((els.hintbar as any).__t);
     (els.hintbar as any).__t = window.setTimeout(() => els.hintbar.classList.add('hidden'), ms);
   }
+}
+
+/* --------------------------- 复制 / 引用 --------------------------- */
+
+/** 复制到剪贴板：先走主进程原生剪贴板，再退浏览器 API，最后 execCommand */
+async function copyText(text: string): Promise<void> {
+  const t = (text || '').trim();
+  if (!t) {
+    toast('这一段还是空的');
+    return;
+  }
+  try {
+    await call('clipboard:write', { text: t });
+    toast('已复制到剪贴板');
+    return;
+  } catch {
+    /* 落到浏览器 API */
+  }
+  try {
+    await navigator.clipboard.writeText(t);
+    toast('已复制到剪贴板');
+    return;
+  } catch {
+    /* 落到下面的兜底 */
+  }
+  const ta = document.createElement('textarea');
+  ta.value = t;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  toast(ok ? '已复制到剪贴板' : '复制失败，请选中后按 Ctrl+C', ok ? 'info' : 'error');
+}
+
+/** 选中答案里的文字 → 把这一段引用进追问框 */
+let quoteRange: Range | null = null;
+
+function hideQuoteBtn(): void {
+  els.quoteBtn.classList.add('hidden');
+  quoteRange = null;
+}
+
+function updateQuoteBtn(): void {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) {
+    hideQuoteBtn();
+    return;
+  }
+  const text = sel.toString().trim();
+  if (text.length < 2) {
+    hideQuoteBtn();
+    return;
+  }
+  // 只认答案区里的选择，免得和追问框里选字打架
+  const node = sel.anchorNode;
+  if (!node || !els.answer.contains(node)) {
+    hideQuoteBtn();
+    return;
+  }
+
+  const range = sel.getRangeAt(0).cloneRange();
+  const rect = range.getBoundingClientRect();
+  if (!rect.width && !rect.height) {
+    hideQuoteBtn();
+    return;
+  }
+  quoteRange = range;
+
+  const W = 118;
+  let left = Math.max(8, Math.min(rect.right - W / 2, window.innerWidth - W - 8));
+  let top = rect.bottom + 6;
+  if (top > window.innerHeight - 34) top = Math.max(6, rect.top - 32);
+  els.quoteBtn.style.left = `${left}px`;
+  els.quoteBtn.style.top = `${top}px`;
+  els.quoteBtn.classList.remove('hidden');
+}
+
+function insertQuote(text: string): void {
+  const quoted = text
+    .split('\n')
+    .map((l) => `> ${l}`)
+    .join('\n');
+  const cur = els.ask.value.replace(/\s+$/, '');
+  els.ask.value = cur ? `${cur}\n${quoted}\n` : `${quoted}\n`;
+  autoGrow();
+  els.ask.focus();
+  const end = els.ask.value.length;
+  els.ask.setSelectionRange(end, end);
+}
+
+/* --------------------------- 错题本收藏 --------------------------- */
+
+let categories: string[] = [];
+let defaultCat = '';
+
+function renderCategorySelect(): void {
+  const sel = els.collectCat;
+  sel.innerHTML = '';
+  const items: { value: string; label: string }[] = [
+    { value: '', label: '未分类' },
+    ...categories.map((c) => ({ value: c, label: c })),
+    { value: '__new__', label: '＋ 新建分类…' },
+  ];
+  for (const it of items) {
+    const o = document.createElement('option');
+    o.value = it.value;
+    o.textContent = it.label;
+    sel.appendChild(o);
+  }
+  sel.value = categories.includes(defaultCat) ? defaultCat : '';
+  els.collectCat.title = `收藏到：${sel.value || '未分类'}`;
+}
+
+async function setDefaultCat(name: string): Promise<void> {
+  defaultCat = name;
+  renderCategorySelect();
+  try {
+    await call('settings:set', { lastNotebookCategory: name });
+  } catch {
+    /* 只是记住偏好，失败不影响收藏本身 */
+  }
+}
+
+/** 收藏按钮旁的「新建分类」内联输入 */
+let committingCat = false;
+
+async function commitNewCategory(): Promise<void> {
+  committingCat = true;
+  const name = els.newCat.value.trim();
+  els.newCat.classList.add('hidden');
+  els.collectCat.classList.remove('hidden');
+  try {
+    if (!name) {
+      renderCategorySelect();
+      return;
+    }
+    categories = await call<string[]>('categories:add', { name });
+    await setDefaultCat(name);
+    toast(`已新建分类「${name}」`);
+  } catch (e: any) {
+    toast(e?.message || '新建分类失败', 'error');
+    renderCategorySelect();
+  } finally {
+    committingCat = false;
+  }
+}
+
+function cancelNewCategory(): void {
+  if (committingCat) return;
+  els.newCat.value = '';
+  els.newCat.classList.add('hidden');
+  els.collectCat.classList.remove('hidden');
+  renderCategorySelect();
+}
+
+/** 收藏成功时按钮闪一下，比 toast 更直观 */
+function flashCollected(): void {
+  els.btnCollect.classList.add('done');
+  els.btnCollect.textContent = '★ 已收藏';
+  window.setTimeout(() => {
+    els.btnCollect.classList.remove('done');
+    els.btnCollect.textContent = '☆ 收藏';
+  }, 1400);
 }
 
 /* ------------------------------- 事件 ------------------------------- */
@@ -298,6 +484,10 @@ async function refreshSettings(): Promise<void> {
       .replace(/CommandOrControl|Control|CmdOrCtrl/g, 'Ctrl')
       .replace(/\+/g, ' + ');
   }
+  categories = p.settings.notebookCategories || [];
+  defaultCat = p.settings.lastNotebookCategory || '';
+  // 正在输入新分类名的时候别把输入框顶掉
+  if (els.collectCat && els.newCat.classList.contains('hidden')) renderCategorySelect();
 }
 
 function setModeUi(m: Mode): void {
@@ -392,6 +582,79 @@ async function init(): Promise<void> {
     if (dragged) return;
     applyCollapsed(false);
     void call('window:collapse', { collapsed: false });
+  };
+
+  /* ---- 错题本收藏 ---- */
+  els.btnCollect.onclick = async () => {
+    const chosen = els.collectCat.value;
+    if (chosen === '__new__') {
+      els.collectCat.classList.add('hidden');
+      els.newCat.classList.remove('hidden');
+      els.newCat.value = '';
+      els.newCat.focus();
+      return;
+    }
+    els.btnCollect.disabled = true;
+    try {
+      const r = await call<{ status: string; message: string }>('notebook:add', {
+        category: chosen,
+      });
+      if (r.status === 'empty') toast(r.message, 'error');
+      else {
+        toast(r.message);
+        flashCollected();
+      }
+    } catch (e: any) {
+      toast(e?.message || '收藏失败', 'error');
+    } finally {
+      els.btnCollect.disabled = false;
+    }
+  };
+
+  els.collectCat.onchange = () => {
+    if (els.collectCat.value === '__new__') {
+      els.collectCat.classList.add('hidden');
+      els.newCat.classList.remove('hidden');
+      els.newCat.value = '';
+      els.newCat.focus();
+      return;
+    }
+    void setDefaultCat(els.collectCat.value);
+  };
+
+  els.newCat.onkeydown = (e) => {
+    if (e.isComposing) return;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      void commitNewCategory();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelNewCategory();
+    }
+  };
+  els.newCat.onblur = () => cancelNewCategory();
+
+  /* ---- 复制 / 引用到追问 ---- */
+  let quoteTick = false;
+  document.addEventListener('selectionchange', () => {
+    if (quoteTick) return;
+    quoteTick = true;
+    requestAnimationFrame(() => {
+      quoteTick = false;
+      updateQuoteBtn();
+    });
+  });
+  els.answer.addEventListener('scroll', hideQuoteBtn, { passive: true });
+  // 保住选区，免得点按钮时选择先被清掉
+  els.quoteBtn.addEventListener('mousedown', (e) => e.preventDefault());
+  els.quoteBtn.onclick = () => {
+    const text = (quoteRange?.toString() || window.getSelection()?.toString() || '').trim();
+    hideQuoteBtn();
+    if (!text) return;
+    insertQuote(text);
+    showHint('已引用到追问框，接着写你的问题就行', 'info', 4000);
   };
 
   /* ---- 追问 ---- */

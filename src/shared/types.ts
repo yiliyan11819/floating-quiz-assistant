@@ -55,6 +55,10 @@ export interface Settings {
   opacity: number;
   /** 是否把发生过追问的题目自动收进错题本 */
   autoCollectAsked: boolean;
+  /** 错题本的自定义分类名（不含保留的「未分类」） */
+  notebookCategories: string[];
+  /** 一键收藏时默认归入的分类，空串表示「未分类」 */
+  lastNotebookCategory: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -65,7 +69,7 @@ export const DEFAULT_SETTINGS: Settings = {
   customStylePrompt: '',
   staticMs: 1000,
   pollMs: 500,
-  hammingThreshold: 4,
+  hammingThreshold: 8,
   cooldownMs: 30000,
   hotkey: 'Control+Shift+A',
   monitorRegion: null,
@@ -76,6 +80,8 @@ export const DEFAULT_SETTINGS: Settings = {
   extraBody: '',
   opacity: 1,
   autoCollectAsked: true,
+  notebookCategories: [],
+  lastNotebookCategory: '',
 };
 
 /** 缓存的已回答题目 */
@@ -100,6 +106,8 @@ export interface NotebookEntry {
   /** 缩略图 dataURL（长边 320） */
   thumb: string;
   askedFollowUp: boolean;
+  /** 分类名；空串表示「未分类」 */
+  category: string;
 }
 
 /** 一轮对话消息（用于多轮追问） */

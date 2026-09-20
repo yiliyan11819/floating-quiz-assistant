@@ -9,6 +9,7 @@ import {
   dialog,
   shell,
   nativeTheme,
+  clipboard,
 } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,7 +19,7 @@ import { Store } from './store';
 import { WindowManager } from './windows';
 import { GPU_DISABLED, transparentOk } from './gpu';
 import { AutoMonitor } from './monitor';
-import { captureRegion, encodeForModel, makeThumb, CapturedFrame } from './capture';
+import { captureRegion, cropFrozen, encodeForModel, makeThumb, CapturedFrame } from './capture';
 import { computeDHash } from './dhash';
 import { streamChat, testConnection, ApiError, ChatMessage } from './deepseek';
 import { buildSystemPrompt, FOLLOWUP_PREFIX } from '../shared/prompts';
@@ -29,6 +30,7 @@ import {
   Mode,
   StreamEvent,
   ChatTurn,
+  NotebookEntry,
   DEFAULT_SETTINGS,
 } from '../shared/types';
 
@@ -246,15 +248,60 @@ class Controller {
     await this.runSolve(region, { force: false });
   }
 
-  /** ② 自由截图：先框选，再只识别选中区域 */
+  /** ② 自由截图：先冻结画面 + 框选，再只识别选中区域 */
   async startFreeShot(): Promise<void> {
     if (this.windows.isPickerOpen()) return;
-    const region = await this.windows.openRegionPicker('拖拽框选要识别的题目区域 · ESC 取消');
-    if (!region) return;
+
+    // 截图 → 开遮罩这中间有一小段空档，先给用户一个反馈
+    this.setStatus('reading', '正在冻结画面…');
+
+    let region: Region | null;
+    try {
+      region = await this.windows.openRegionPicker('拖拽框选要识别的题目区域 · ESC 取消');
+    } catch (e: any) {
+      this.windows.releaseFrozen();
+      const msg = e?.message || '框选失败';
+      this.setStatus('error', msg);
+      this.windows.toFloat('evt:status', { status: 'error', text: msg, mode: this.mode });
+      return;
+    }
+
+    if (!region) {
+      this.windows.releaseFrozen();
+      this.setStatus('idle', '已取消');
+      return;
+    }
+
+    // ★ 从「冻结的那一帧」里裁剪，而不是重新截屏。
+    //   这样拿到的图就是用户框选时看到的内容，也不会把遮罩拍进去。
+    const frozen = this.windows.frameFor(region.displayId) ?? this.windows.anyFrame();
+    let frame: CapturedFrame | null = null;
+    if (frozen) frame = cropFrozen(frozen, region);
+    this.windows.releaseFrozen();
+
     this.mode = 'shot';
     this.windows.toFloat('evt:mode', { mode: 'shot' });
     this.rebuildTrayMenu();
-    await this.runSolve(region, { force: false });
+
+    if (!frame) {
+      // 冻结帧意外丢失（切屏 / 显示器热插拔）时退回实时截屏
+      await this.runSolve(region, { force: false });
+      return;
+    }
+
+    const h = computeDHash(frame.image);
+    if (h.blank) {
+      const msg = '选中的区域是一片纯色，没截到内容，请重新框选';
+      this.setStatus('error', msg);
+      this.windows.toFloat('evt:status', { status: 'error', text: msg, mode: this.mode });
+      return;
+    }
+
+    await this.runSolve(
+      region,
+      { force: false },
+      { frame, hash: h.hash, reqId: this.newRequestId() }
+    );
   }
 
   /** ③ 自动模式触发 */
@@ -546,6 +593,8 @@ class Controller {
             answer: q.answer + (acc ? `\n\n---\n\n**追问：${clean}**\n\n${answer}` : ''),
             thumb: q.thumb,
             askedFollowUp: true,
+            // 空串＝保持已有分类不动（upsert 里只在原本没分类时才采用这个值）
+            category: '',
           },
           s.hammingThreshold
         );
@@ -635,9 +684,15 @@ class Controller {
   }
 
   async pickMonitorRegion(): Promise<Region | null> {
-    const r = await this.windows.openRegionPicker(
-      '拖拽框选要监控的区域（比如刷题网页的题目区）· ESC 取消'
-    );
+    let r: Region | null = null;
+    try {
+      r = await this.windows.openRegionPicker(
+        '拖拽框选要监控的区域（比如刷题网页的题目区）· ESC 取消'
+      );
+    } finally {
+      // 监控区域只需要坐标，用不上冻结帧，早点把内存放掉
+      this.windows.releaseFrozen();
+    }
     if (r) {
       this.store.updateSettings({ monitorRegion: r });
       this.monitor?.updateOptions({ region: r });
@@ -795,6 +850,64 @@ class Controller {
     win.setBounds({ x: nx, y: ny, width: b.width, height: b.height }, false);
   }
 
+  /* ---------------- 错题本：一键收藏 / 分类 ---------------- */
+
+  /**
+   * 一键把当前这道题收进错题本 —— 不需要先追问。
+   * 哈希相近的题只保留一条：已经收藏过就只补分类，绝不覆盖已有答案。
+   */
+  addToNotebook(category?: string): {
+    status: 'added' | 'updated' | 'empty';
+    message: string;
+    entry?: NotebookEntry;
+  } {
+    const q = this.currentQuestion;
+    const answer = (q?.answer || '').trim();
+    if (!q || !answer) {
+      return { status: 'empty', message: '还没有识别到题目' };
+    }
+    if (NO_QUESTION_RE.test(answer)) {
+      return { status: 'empty', message: '这一屏没检测到题目，没什么可收藏的' };
+    }
+
+    const s = this.store.getSettings();
+    const cat = typeof category === 'string' ? category : s.lastNotebookCategory;
+
+    const exist = this.store.findNotebookByHash(q.hash, s.hammingThreshold);
+    let entry: NotebookEntry;
+    let status: 'added' | 'updated';
+
+    if (exist) {
+      if (!exist.category && cat) this.store.setNotebookCategory(exist.id, cat);
+      entry = exist;
+      status = 'updated';
+    } else {
+      entry = this.store.addNotebook({
+        hash: q.hash,
+        question: '',
+        answer,
+        thumb: q.thumb,
+        askedFollowUp: false,
+        category: cat,
+      });
+      status = 'added';
+    }
+
+    if (cat !== s.lastNotebookCategory) {
+      this.store.updateSettings({ lastNotebookCategory: cat });
+    }
+    this.windows.broadcast('evt:notebook');
+
+    return {
+      status,
+      message:
+        status === 'added'
+          ? `已加入错题本${cat ? ` · ${cat}` : ''}`
+          : `已在错题本里${cat ? ` · ${cat}` : ''}`,
+      entry,
+    };
+  }
+
   /* ---------------- 错题本导出 ---------------- */
 
   async exportNotebook(): Promise<string | null> {
@@ -812,22 +925,42 @@ class Controller {
     if (res.canceled || !res.filePath) return null;
 
     const lines: string[] = [`# 错题本 · 导出时间 ${new Date().toLocaleString('zh-CN')}`, ''];
-    list.forEach((e, i) => {
-      lines.push(
-        `## ${i + 1}. ${new Date(e.createdAt).toLocaleString('zh-CN')}${
-          e.askedFollowUp ? ' · 追问过' : ''
-        }`
-      );
+
+    // 按分类分组导出，顺序：先未分类，再按用户自定义分类的顺序
+    const cats = this.store.listCategories();
+    const groups: { name: string; items: typeof list }[] = [
+      { name: '', items: list.filter((e) => !e.category) },
+      ...cats.map((c) => ({ name: c, items: list.filter((e) => e.category === c) })),
+    ];
+    // 分类被删掉但条目还带着旧分类名的兜底
+    const known = new Set(['', ...cats]);
+    const orphans = list.filter((e) => e.category && !known.has(e.category));
+    if (orphans.length) groups.push({ name: '其他', items: orphans });
+
+    let n = 0;
+    for (const g of groups) {
+      if (!g.items.length) continue;
+      lines.push(`## ${g.name || '未分类'}（${g.items.length}）`);
       lines.push('');
-      if (e.thumb) {
-        lines.push(`![题目截图](${e.thumb})`);
+      for (const e of g.items) {
+        n++;
+        lines.push(
+          `### ${n}. ${new Date(e.createdAt).toLocaleString('zh-CN')}${
+            e.askedFollowUp ? ' · 追问过' : ''
+          }`
+        );
+        lines.push('');
+        if (e.thumb) {
+          lines.push(`![题目截图](${e.thumb})`);
+          lines.push('');
+        }
+        lines.push(e.answer || '（无答案）');
         lines.push('');
       }
-      lines.push(e.answer || '（无答案）');
-      lines.push('');
       lines.push('---');
       lines.push('');
-    });
+    }
+
     fs.writeFileSync(res.filePath, lines.join('\n'), 'utf8');
     const dir = path.dirname(res.filePath);
     const r = await dialog.showMessageBox({
@@ -1018,6 +1151,9 @@ function registerIpc(): void {
       ...DEFAULT_SETTINGS,
       apiKey: cur.apiKey, // 重置设置不该顺手把 Key 删了
       monitorRegion: null,
+      // 分类属于「数据」而不是「偏好」，跟着设置一起清掉会把错题本弄乱
+      notebookCategories: cur.notebookCategories,
+      lastNotebookCategory: cur.lastNotebookCategory,
     });
   });
   h('settings:test', async (p: { apiKey?: string; baseUrl?: string }) => {
@@ -1068,6 +1204,7 @@ function registerIpc(): void {
     ctrl.windows.finishPick(payload?.region ?? null);
     return null;
   });
+  h('pick:backdrop', (p: { displayId: number }) => ctrl.windows.backdropFor(Number(p?.displayId)));
 
   h('chat:send', (p: { text: string }) => ctrl.sendChat(p?.text || ''));
 
@@ -1101,6 +1238,11 @@ function registerIpc(): void {
 
   h('ui:openSettings', () => {
     ctrl.windows.openSettings();
+    return null;
+  });
+  // 用 Electron 原生剪贴板，比渲染层的 navigator.clipboard 稳（不受权限策略影响）
+  h('clipboard:write', (p: { text: string }) => {
+    clipboard.writeText(String(p?.text ?? ''));
     return null;
   });
   h('ui:openNotebook', () => {

@@ -126,10 +126,14 @@
           <label for="hammingThreshold">同题判定阈值</label>
           <div class="field">
             <div class="slider-row">
-              <input id="hammingThreshold" type="range" min="0" max="16" step="1" />
+              <input id="hammingThreshold" type="range" min="0" max="32" step="1" />
               <output id="hammingThresholdOut" class="num"></output>
             </div>
-            <p class="hint">感知哈希汉明距离 ≤ 该值就当成同一道题，直接出缓存答案。默认 4。</p>
+            <p class="hint">
+              感知哈希的汉明距离 ≤ 该值就算作同一道题，直接出缓存答案、不再调 API。<br />
+              <b>调高更省 token</b>（字幕滚动、进度条走动这类小变化不会再被当成新题），
+              但调得太高会把不同的题误判成同一道。默认 8，建议 8–16。
+            </p>
           </div>
         </div>
 

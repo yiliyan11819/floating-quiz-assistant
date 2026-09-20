@@ -479,3 +479,110 @@ body.opaque .capsule {
   height: 100%;
   border-radius: var(--radius-sm);
 }
+
+/* ==========================================================================
+   收藏 / 分类 / 复制 / 引用
+   ========================================================================== */
+
+/* 收藏按钮 */
+.actions #btnCollect {
+  white-space: nowrap;
+}
+
+/* 浮窗默认只有 380px 宽，「识别本页 + 收藏 + 分类下拉」挤在一行里，
+   让按钮不参与收缩，把空间让给右边的状态文字（它自带省略号）。 */
+.actions > button,
+.actions .cat-select,
+.actions .cat-input {
+  flex: 0 0 auto;
+}
+
+.actions .meta {
+  min-width: 0;
+}
+
+.actions #btnCollect.done {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 分类下拉：做得窄一点，给「识别本页」和状态文字留位置 */
+.actions .cat-select {
+  max-width: 84px;
+  height: 26px;
+  padding: 0 4px;
+  font-size: 11.5px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.actions .cat-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* 「新建分类」内联输入，占下拉的位置 */
+.actions .cat-input {
+  width: 92px;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/* 每段答案右上角的一键复制 */
+.entry-head .copy-btn {
+  margin-left: auto;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.14s ease, color 0.14s ease;
+}
+
+.entry:hover .copy-btn,
+.entry-head .copy-btn:focus-visible {
+  opacity: 1;
+}
+
+.entry-head .copy-btn:hover {
+  color: var(--accent);
+  border-color: var(--border);
+}
+
+/* 选中文字时浮现的「引用到追问」 */
+.quote-btn {
+  position: fixed;
+  z-index: 40;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  white-space: nowrap;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.quote-btn:hover {
+  filter: brightness(1.08);
+}
+
+.quote-btn.hidden {
+  display: none;
+}
+

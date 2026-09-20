@@ -7,9 +7,21 @@ const params = new URLSearchParams(location.search);
 const hintText = decodeURIComponent(params.get('hint') || '拖拽框选要识别的区域');
 const displayId = Number(params.get('displayId') || '0');
 
-// 关掉硬件加速时主进程会改用「不透明 + 整窗半透明」的降级方案，
-// 这里同步切样式（关掉 #dim、去掉挖洞阴影），避免两层压暗叠加。
-if (params.get('opaque') === '1') document.body.classList.add('opaque');
+/**
+ * 冻结帧模式：主进程在开遮罩之前先把屏幕拍下来，
+ * 这里把它铺成背景。好处是播放器的硬件视频叠加层不会被透明窗口挤掉
+ * （那会让框选时视频整块变黑），而且画面静止，更好选。
+ */
+if (params.get('frozen') === '1') {
+  document.body.classList.add('frozen');
+  const backdrop = document.getElementById('backdrop') as HTMLElement;
+  void call<string | null>('pick:backdrop', { displayId })
+    .then((url) => {
+      if (url) backdrop.style.backgroundImage = `url("${url}")`;
+      else backdrop.classList.add('failed');
+    })
+    .catch(() => backdrop.classList.add('failed'));
+}
 
 const dim = document.getElementById('dim') as HTMLElement;
 const sel = document.getElementById('sel') as HTMLElement;
