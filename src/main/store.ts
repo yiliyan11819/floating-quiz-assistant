@@ -70,11 +70,70 @@ function readJson<T>(file: string, fallback: T): T {
 }
 
 /* ------------------------------------------------------------------ */
+/* 诊断日志                                                            */
+/* ------------------------------------------------------------------ */
+
+const DIAG_FILE = 'diag.log';
+const DIAG_MAX_BYTES = 200 * 1024;
+
+/**
+ * 极简诊断日志：只记「事件 + 形状」，**绝不记任何设置值**（密钥只记长度）。
+ * 出现「配置莫名丢了」这类问题时，这是唯一能还原现场的东西。
+ */
+export function diag(event: string, data?: Record<string, unknown>): void {
+  try {
+    const file = filePath(DIAG_FILE);
+    try {
+      if (fs.statSync(file).size > DIAG_MAX_BYTES) fs.rmSync(file, { force: true });
+    } catch {
+      /* 文件不存在，正常 */
+    }
+    fs.appendFileSync(
+      file,
+      `${new Date().toISOString()} ${event}${data ? ` ${JSON.stringify(data)}` : ''}\n`,
+      'utf8'
+    );
+  } catch {
+    /* 记日志失败绝不能反过来影响主流程 */
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* 密钥加解密                                                          */
 /* ------------------------------------------------------------------ */
 
-function encryptSecret(plain: string): string {
-  if (!plain) return '';
+/**
+ * 密钥的「镜像副本」。
+ *
+ * 单独的 settings.json 一旦被别的写入路径顺手覆盖，用户就得重新填 Key。
+ * 这里额外存一份密文，读的时候只要主文件里没有/解不开就回退到它。
+ * 仍然是 safeStorage 加密的密文，安全性不变。
+ */
+const SECRET_MIRROR_FILE = 'secret.mirror.json';
+
+function readMirror(): string {
+  const raw = readJson<{ apiKey?: string }>(filePath(SECRET_MIRROR_FILE), {});
+  return typeof raw?.apiKey === 'string' ? raw.apiKey : '';
+}
+
+function writeMirror(stored: string): void {
+  try {
+    if (!stored) {
+      try {
+        fs.rmSync(filePath(SECRET_MIRROR_FILE), { force: true });
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    writeJsonAtomic(filePath(SECRET_MIRROR_FILE), { apiKey: stored, at: Date.now() });
+  } catch {
+    /* 镜像只是兜底，写失败不影响主流程 */
+  }
+}
+
+function encryptSecret(plain: unknown): string {
+  if (typeof plain !== 'string' || !plain) return '';
   try {
     if (safeStorage.isEncryptionAvailable()) {
       return ENC_PREFIX + safeStorage.encryptString(plain).toString('base64');
@@ -85,14 +144,14 @@ function encryptSecret(plain: string): string {
   return plain;
 }
 
-function decryptSecret(stored: string): string {
-  if (!stored) return '';
+function decryptSecret(stored: unknown): string {
+  if (typeof stored !== 'string' || !stored) return '';
   if (!stored.startsWith(ENC_PREFIX)) return stored; // 旧数据/明文兜底
   try {
     const buf = Buffer.from(stored.slice(ENC_PREFIX.length), 'base64');
     return safeStorage.decryptString(buf);
   } catch {
-    // 换了电脑 / 换了 Windows 账户后 DPAPI 解不开，视为未配置
+    // 换了电脑 / 换了 Windows 账户后 DPAPI 解不开
     return '';
   }
 }
@@ -111,12 +170,49 @@ export class Store {
   private cache: CacheEntry[];
   private notebook: NotebookEntry[];
 
+  /**
+   * 密钥单独存放，**不进 this.settings**。
+   *
+   * 踩过的坑：以前密钥混在 settings 里，跟着 `{...settings, ...patch}` 一起合并。
+   * 只要上游某个 patch 里带了 `apiKey: undefined` / `null`，内存里的密钥就会被
+   * 覆盖成空值，随后任何一次设置保存都会把磁盘上的密文改写成空串 ——
+   * 用户看到的现象就是「每次启动都要重新填 API Key」。
+   */
+  private apiKeyPlain = '';
+  /** 磁盘上那份密文的原样副本：落盘时直接写回，绝不重新加密 */
+  private apiKeyStored = '';
+  /** 磁盘上有密钥但解不开（换了电脑 / 换了 Windows 账户） */
+  private apiKeyBroken = false;
+
   constructor() {
     const raw = readJson<Partial<StoredSettings>>(filePath(SETTINGS_FILE), {});
     const merged = { ...DEFAULT_SETTINGS, ...raw } as Settings;
-    merged.apiKey = decryptSecret((raw.apiKey as string) || '');
-    // 订阅号免费额度之外，用户可能填了带空格的 key
-    merged.apiKey = merged.apiKey.trim();
+
+    // ---------------- 密钥：绕开普通设置合并，单独处理 ----------------
+    const storedKey = typeof raw.apiKey === 'string' ? raw.apiKey : '';
+    let plain = decryptSecret(storedKey);
+    let kept = storedKey;
+    if (!plain) {
+      // 主文件里没有 / 解不开 → 用镜像副本兜底，别让用户重填
+      const mirror = readMirror();
+      if (mirror && mirror !== storedKey) {
+        const fromMirror = decryptSecret(mirror);
+        if (fromMirror) {
+          plain = fromMirror;
+          kept = mirror;
+        }
+      }
+    }
+    this.apiKeyPlain = plain;
+    this.apiKeyStored = plain ? kept : storedKey;
+    this.apiKeyBroken = !plain && !!storedKey;
+    // 真正的密钥不放这里，settings 里永远是空串
+    merged.apiKey = '';
+    diag('boot', {
+      keyReadable: !!plain,
+      keyWasOnDisk: !!storedKey,
+      keyBroken: this.apiKeyBroken,
+    });
 
     // 兼容更早的配置：那时候阈值默认是 4，偏保守，同一道题稍微变一点就会被
     // 当成新题重新调 API。用户没有手动改过的话，跟着新默认一起抬到 8。
@@ -133,6 +229,9 @@ export class Store {
     }
     this.settings = merged;
 
+    // 有密钥但还没有镜像（比如从老版本升上来）→ 立刻补一份
+    if (this.apiKeyPlain && !readMirror()) writeMirror(this.apiKeyStored);
+
     this.cache = readJson<CacheEntry[]>(filePath('cache.json'), []);
     this.notebook = readJson<NotebookEntry[]>(filePath('notebook.json'), []).map((e) => ({
       ...e,
@@ -144,12 +243,17 @@ export class Store {
   /* ---------------- settings ---------------- */
 
   getSettings(): Settings {
-    return { ...this.settings };
+    return { ...this.settings, apiKey: this.apiKeyPlain };
+  }
+
+  /** 磁盘上存着密钥但当前解不开 */
+  isApiKeyBroken(): boolean {
+    return this.apiKeyBroken;
   }
 
   /** 只返回脱敏后的 key，供 UI 展示 */
   getRedactedKey(): string {
-    const k = this.settings.apiKey;
+    const k = this.apiKeyPlain;
     if (!k) return '';
     if (k.length <= 10) return `${k.slice(0, 3)}****`;
     return `${k.slice(0, 6)}${'*'.repeat(8)}${k.slice(-4)}`;
@@ -157,6 +261,26 @@ export class Store {
 
   updateSettings(patch: Partial<Settings>): Settings {
     const next: Settings = { ...this.settings, ...patch };
+
+    // ★ 密钥只有「显式传了一个字符串」时才允许变。
+    //   patch 里没有 apiKey、或者传的是 undefined / null，一律完全不动。
+    const keyTouched =
+      Object.prototype.hasOwnProperty.call(patch, 'apiKey') &&
+      typeof patch.apiKey === 'string';
+    // 顺便把 apiKey 从合并结果里摘掉，避免它以任何形式混进来
+    delete (next as Partial<Settings>).apiKey;
+
+    if (keyTouched) {
+      const v = (patch.apiKey as string).trim();
+      if (v !== this.apiKeyPlain) {
+        this.apiKeyPlain = v;
+        this.apiKeyStored = encryptSecret(v);
+        this.apiKeyBroken = false;
+        writeMirror(this.apiKeyStored);
+        diag('key-set', { len: v.length });
+      }
+    }
+
     // 防呆：把几个关键数值夹到合理区间，避免用户手填出 0 或负数把自动模式卡死
     next.staticMs = clamp(next.staticMs, 300, 10000);
     next.pollMs = clamp(next.pollMs, 200, 3000);
@@ -175,7 +299,6 @@ export class Store {
     ) {
       next.lastNotebookCategory = '';
     }
-    if (typeof next.apiKey === 'string') next.apiKey = next.apiKey.trim();
     this.settings = next;
     this.persistSettings();
     return this.getSettings();
@@ -183,8 +306,9 @@ export class Store {
 
   private persistSettings(): void {
     const stored: StoredSettings = {
-      ...this.settings,
-      apiKey: encryptSecret(this.settings.apiKey),
+      ...(this.settings as unknown as StoredSettings),
+      // ★ 原样写回磁盘上那份密文：不重新加密、也不会被别的设置项牵连
+      apiKey: this.apiKeyStored,
     };
     writeJsonAtomic(filePath(SETTINGS_FILE), stored);
   }

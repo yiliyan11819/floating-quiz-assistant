@@ -318,6 +318,10 @@ footer {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* 窗口窄 + 按钮多（识别本页 / 停止 / 收藏 / 分类下拉），
+     宁可换行也不要把按钮压扁、或者把状态文字裁掉 */
+  row-gap: 5px;
+  flex-wrap: wrap;
   margin-bottom: 7px;
 }
 
@@ -333,7 +337,9 @@ footer {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 45%;
+  flex: 1 1 56px;
+  min-width: 0;
+  text-align: right;
 }
 
 .ask {
@@ -478,6 +484,12 @@ body.opaque .capsule {
   width: 100%;
   height: 100%;
   border-radius: var(--radius-sm);
+}
+
+/* 浮窗只有几百像素高，提示气泡贴在底部会把「收藏 / 发送」挡住，
+   抬到footer上方，并且不吃鼠标事件（pointer-events: none 见 client.ts） */
+:root {
+  --toast-bottom: 100px;
 }
 
 /* ==========================================================================

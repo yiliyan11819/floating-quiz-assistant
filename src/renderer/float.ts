@@ -88,8 +88,26 @@ function updateCapsuleDot(): void {
   }`;
 }
 
-function scrollToEnd(): void {
-  els.answer.scrollTop = els.answer.scrollHeight;
+/**
+ * 滚到底部。
+ *
+ * 两个讲究：
+ * 1. 用户自己往上翻看前面的步骤时，不要每来一段就把他拽回底部；
+ * 2. 用 rAF 合并同一帧里的多次调用，避免一直在触发布局。
+ */
+let scrollScheduled = false;
+
+function scrollToEnd(force = false): void {
+  if (scrollScheduled && !force) return;
+  scrollScheduled = true;
+  requestAnimationFrame(() => {
+    scrollScheduled = false;
+    const box = els.answer;
+    // 距离底部超过 80px，认为用户正在翻看上面，别打断
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+    if (!force && !nearBottom) return;
+    box.scrollTop = box.scrollHeight;
+  });
 }
 
 function removeEmpty(): void {
@@ -147,7 +165,11 @@ function addEntry(kind: Entry['kind'], text: string, opts: { cached?: boolean; s
   if (kind === 'error') {
     body.textContent = text;
   } else {
-    entry.renderer = createThrottledRenderer(body, 55);
+    // onPaint：只在真正写进 DOM 之后再滚动，避免每个 chunk 都触发布局
+    entry.renderer = createThrottledRenderer(body, {
+      delayMs: 70,
+      onPaint: () => scrollToEnd(),
+    });
     entry.renderer.update(text, !!opts.streaming);
 
     // 解答块给个一键复制（复制的是 Markdown 原文，公式和代码都能带走）
@@ -163,7 +185,7 @@ function addEntry(kind: Entry['kind'], text: string, opts: { cached?: boolean; s
   }
 
   entries.push(entry);
-  scrollToEnd();
+  scrollToEnd(true);
   return entry;
 }
 
@@ -404,8 +426,8 @@ function handleStream(evt: StreamEvent): void {
       const e = activeEntry();
       if (!e) return;
       e.text += evt.delta;
+      // 滚动交给渲染器的 onPaint —— 每个 chunk 都调一次滚动会一直触发布局
       e.renderer?.update(e.text, true);
-      scrollToEnd();
       break;
     }
     case 'reasoning': {
@@ -595,6 +617,11 @@ async function init(): Promise<void> {
       return;
     }
     els.btnCollect.disabled = true;
+    // 看门狗：万一主进程那边卡住（或返回了一个永远不 settle 的 Promise），
+    // 也保证按钮一定会恢复可点，不会出现「点一次之后就再也点不动」。
+    const watchdog = window.setTimeout(() => {
+      els.btnCollect.disabled = false;
+    }, 8000);
     try {
       const r = await call<{ status: string; message: string }>('notebook:add', {
         category: chosen,
@@ -607,6 +634,7 @@ async function init(): Promise<void> {
     } catch (e: any) {
       toast(e?.message || '收藏失败', 'error');
     } finally {
+      window.clearTimeout(watchdog);
       els.btnCollect.disabled = false;
     }
   };

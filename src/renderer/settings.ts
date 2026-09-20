@@ -96,16 +96,26 @@ function fmtRegion(r: Region | null): string {
   return `${Math.round(r.x)}, ${Math.round(r.y)} · ${Math.round(r.width)}×${Math.round(r.height)}`;
 }
 
-function applySettings(s: Omit<Settings, 'apiKey'>, hasApiKey: boolean, redacted: string): void {
+function applySettings(
+  s: Omit<Settings, 'apiKey'>,
+  hasApiKey: boolean,
+  redacted: string,
+  keyBroken = false
+): void {
   el.baseUrl.value = s.baseUrl;
   el.model.value = s.model;
 
   el.apiKey.value = '';
   el.apiKey.placeholder = hasApiKey ? redacted || 'sk-••••••••' : 'sk-...';
-  el.keyHint.textContent = hasApiKey
-    ? '已保存。留空表示不修改；想换 Key 就直接输入新的覆盖。'
-    : '还没有填写。到 platform.deepseek.com 申请一个。';
-  el.keyHint.style.color = hasApiKey ? 'var(--ok)' : '';
+  if (keyBroken) {
+    el.keyHint.textContent =
+      '本机存着的 Key 解不开了（一般是换了 Windows 账户或换过电脑），请重新填一次。';
+  } else if (hasApiKey) {
+    el.keyHint.textContent = '已保存。留空表示不修改；想换 Key 就直接输入新的覆盖。';
+  } else {
+    el.keyHint.textContent = '还没有填写。到 platform.deepseek.com 申请一个。';
+  }
+  el.keyHint.style.color = keyBroken ? 'var(--danger)' : hasApiKey ? 'var(--ok)' : '';
 
   el.styleGroup.querySelectorAll<HTMLInputElement>('input[name=style]').forEach((r) => {
     r.checked = r.value === s.answerStyle;
@@ -141,7 +151,7 @@ function applySettings(s: Omit<Settings, 'apiKey'>, hasApiKey: boolean, redacted
 
 async function refresh(): Promise<void> {
   const p = await call<SettingsPayload>('settings:get');
-  applySettings(p.settings, p.hasApiKey, p.redactedKey);
+  applySettings(p.settings, p.hasApiKey, p.redactedKey, !!p.keyBroken);
   await refreshCounts();
 }
 

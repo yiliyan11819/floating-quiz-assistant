@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-import { Store } from './store';
+import { Store, diag } from './store';
 import { WindowManager } from './windows';
 import { GPU_DISABLED, transparentOk } from './gpu';
 import { AutoMonitor } from './monitor';
@@ -33,6 +33,7 @@ import {
   NotebookEntry,
   DEFAULT_SETTINGS,
 } from '../shared/types';
+import { INVOKE_CHANNELS, type InvokeChannel } from '../shared/ipc';
 
 /* ------------------------------------------------------------------ */
 /* 单实例：第二次启动时把已有窗口唤到前面                              */
@@ -786,6 +787,9 @@ class Controller {
       settings: rest,
       hasApiKey: !!s.apiKey,
       redactedKey: this.store.getRedactedKey(),
+      // 磁盘上存着 Key 但当前解不开（换了电脑 / 换了 Windows 账户）——
+      // 让界面能明确说清楚，而不是假装「还没填」
+      keyBroken: this.store.isApiKeyBroken(),
     };
   }
 
@@ -906,6 +910,37 @@ class Controller {
           : `已在错题本里${cat ? ` · ${cat}` : ''}`,
       entry,
     };
+  }
+
+  /* ---------------- 错题本分类 ---------------- */
+
+  /** 分类变了：通知浮窗刷新下拉，也通知设置页 */
+  private broadcastCategories(): void {
+    this.windows.broadcast('evt:notebook');
+    this.windows.broadcast('evt:settings', this.getSettingsPayload());
+  }
+
+  addCategory(name: string): string[] {
+    const next = this.store.addCategory(String(name || ''));
+    this.broadcastCategories();
+    return next;
+  }
+
+  renameCategory(from: string, to: string): string[] {
+    const next = this.store.renameCategory(String(from || ''), String(to || ''));
+    this.broadcastCategories();
+    return next;
+  }
+
+  removeCategory(name: string): string[] {
+    const next = this.store.removeCategory(String(name || ''));
+    this.broadcastCategories();
+    return next;
+  }
+
+  setNotebookCategory(id: string, category: string): void {
+    this.store.setNotebookCategory(String(id || ''), String(category || ''));
+    this.windows.broadcast('evt:notebook');
   }
 
   /* ---------------- 错题本导出 ---------------- */
@@ -1133,7 +1168,11 @@ app.on('will-quit', () => {
 /* ------------------------------------------------------------------ */
 
 function registerIpc(): void {
-  const h = (channel: string, fn: (payload: any, e: Electron.IpcMainInvokeEvent) => any) => {
+  // 记下真正注册过的通道，函数末尾会和 shared/ipc.ts 的清单对一遍
+  const registered = new Set<string>();
+
+  const h = (channel: InvokeChannel, fn: (payload: any, e: Electron.IpcMainInvokeEvent) => any) => {
+    registered.add(channel);
     ipcMain.handle(channel, async (e, payload) => {
       try {
         return { ok: true, data: await fn(payload, e) };
@@ -1214,6 +1253,11 @@ function registerIpc(): void {
     return null;
   });
   h('window:resize', (p: { width: number; height: number }) => ctrl.resizeFloat(p.width, p.height));
+  // 折叠成小胶囊后没有标题栏，只能靠 IPC 拖动窗口
+  h('window:moveBy', (p: { dx: number; dy: number }) => {
+    ctrl.moveFloatBy(Number(p?.dx) || 0, Number(p?.dy) || 0);
+    return null;
+  });
   h('window:opacity', (p: { opacity: number }) => {
     ctrl.updateSettings({ opacity: p.opacity });
     return null;
@@ -1226,15 +1270,29 @@ function registerIpc(): void {
   });
 
   h('notebook:list', () => ctrl.store.listNotebook());
+  h('notebook:add', (p: { category?: string }) => ctrl.addToNotebook(p?.category));
   h('notebook:remove', (p: { id: string }) => {
     ctrl.store.removeNotebook(p.id);
+    ctrl.windows.broadcast('evt:notebook');
+    return null;
+  });
+  h('notebook:setCategory', (p: { id: string; category: string }) => {
+    ctrl.setNotebookCategory(p?.id || '', p?.category || '');
     return null;
   });
   h('notebook:clear', () => {
     ctrl.store.clearNotebook();
+    ctrl.windows.broadcast('evt:notebook');
     return null;
   });
   h('notebook:export', () => ctrl.exportNotebook());
+
+  h('categories:list', () => ctrl.store.listCategories());
+  h('categories:add', (p: { name: string }) => ctrl.addCategory(p?.name || ''));
+  h('categories:rename', (p: { from: string; to: string }) =>
+    ctrl.renameCategory(p?.from || '', p?.to || '')
+  );
+  h('categories:remove', (p: { name: string }) => ctrl.removeCategory(p?.name || ''));
 
   h('ui:openSettings', () => {
     ctrl.windows.openSettings();
@@ -1258,4 +1316,16 @@ function registerIpc(): void {
     }
     return null;
   });
+
+  /*
+   * 一致性自检：preload 白名单里承诺的通道，主进程必须全都注册了。
+   * 漏一个的后果是「渲染层点了按钮才炸 No handler registered for 'xxx'」，
+   * 而且只在踩到那条路径时才暴露 —— 收藏 / 新建分类就这么栽过一次。
+   */
+  const missingChannels = INVOKE_CHANNELS.filter((c) => !registered.has(c));
+  if (missingChannels.length) {
+    const msg = `IPC 通道漏注册：${missingChannels.join(', ')}`;
+    console.error(`[ipc] ${msg}`);
+    diag('ipc-missing', { missing: missingChannels });
+  }
 }

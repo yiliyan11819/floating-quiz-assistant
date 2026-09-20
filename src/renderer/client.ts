@@ -42,10 +42,11 @@ export function toast(message: string, kind: 'info' | 'error' = 'info', ms = 260
     document.body.appendChild(el);
     const style = document.createElement('style');
     style.textContent = `
-      .__toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);
+      .__toast{position:fixed;left:50%;bottom:var(--toast-bottom,22px);transform:translateX(-50%);
         background:var(--fg);color:var(--bg);padding:8px 16px;border-radius:999px;
         font-size:12.5px;box-shadow:var(--shadow);z-index:9999;opacity:0;
-        transition:opacity .18s ease, transform .18s ease;max-width:80vw;text-align:center;}
+        transition:opacity .18s ease, transform .18s ease;max-width:80vw;text-align:center;
+        pointer-events:none;}
       .__toast.show{opacity:.96;transform:translateX(-50%) translateY(-4px);}
       .__toast.error{background:var(--danger);color:#fff;}
     `;

@@ -86,9 +86,19 @@ function extractMath(src: string, slots: Slot[]): string {
   return out;
 }
 
+// 公式渲染结果缓存：同一段 TeX 在流式过程中会被反复重算几十次，
+// 缓存下来能省掉绝大部分 KaTeX 开销（这是长答案卡顿的主因之一）。
+const TEX_CACHE_LIMIT = 800;
+const texCache = new Map<string, string>();
+
 function renderTex(slot: Slot): string {
+  const key = `${slot.display ? 'D' : 'I'}\u0000${slot.tex}`;
+  const hit = texCache.get(key);
+  if (hit !== undefined) return hit;
+
+  let out: string;
   try {
-    return katex.renderToString(slot.tex, {
+    out = katex.renderToString(slot.tex, {
       displayMode: slot.display,
       throwOnError: false,
       errorColor: '#dc2626',
@@ -97,8 +107,11 @@ function renderTex(slot: Slot): string {
       output: 'html',
     });
   } catch {
-    return `<code>${escapeHtml(slot.tex)}</code>`;
+    out = `<code>${escapeHtml(slot.tex)}</code>`;
   }
+  if (texCache.size >= TEX_CACHE_LIMIT) texCache.clear();
+  texCache.set(key, out);
+  return out;
 }
 
 function restore(html: string, slots: Slot[]): string {
@@ -147,39 +160,157 @@ export function renderMarkdown(src: string): string {
   });
 }
 
-/** 流式渲染节流器：高频 chunk 不重复触发重排 */
+/**
+ * 按「空行」把正文切成块（围栏代码块内部的空行不算）。
+ *
+ * 用途：流式渲染时**只重算最后一块**，前面已经定型的块直接复用上次的 HTML。
+ * 长答案（一屏几十个公式）以前每来一个 chunk 就要把整篇重新做一遍
+ * markdown → KaTeX → DOMPurify，能把渲染线程占满，表现就是「界面卡住不动、
+ * 按钮点不动」。改成增量之后，每帧的开销基本只和「最后一段」有关。
+ */
+function splitBlocks(text: string): string[] {
+  const blocks: string[] = [];
+  let buf: string[] = [];
+  let fence: string | null = null;
+
+  const flush = () => {
+    if (buf.length) {
+      blocks.push(buf.join('\n'));
+      buf = [];
+    }
+  };
+
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (t.startsWith('```') || t.startsWith('~~~')) {
+      const marker = t.slice(0, 3);
+      if (fence === marker) fence = null;
+      else if (!fence) fence = marker;
+    }
+    if (!fence && t === '') {
+      flush();
+      continue;
+    }
+    buf.push(line);
+  }
+  flush();
+  return blocks;
+}
+
+export interface ThrottledRendererOptions {
+  /** 基础节流间隔（毫秒），实际间隔会按单次渲染耗时自适应放大 */
+  delayMs?: number;
+  /** 真正写进 DOM 之后回调，用来做滚动之类的事 */
+  onPaint?: () => void;
+}
+
+/**
+ * 流式渲染器：按块增量 + 自适应节流。
+ *
+ * 关键点是**渲染耗时反过来决定下一次的间隔**：某次渲染花了 300ms，
+ * 下一次就等 450ms 再画，宁可少刷新几次，也不能把界面占死。
+ */
 export function createThrottledRenderer(
   el: HTMLElement,
-  delayMs = 60
-): { update: (text: string, streaming?: boolean) => void; flush: () => void } {
+  opts: ThrottledRendererOptions = {}
+): {
+  update: (text: string, streaming?: boolean) => void;
+  flush: () => void;
+  /** 丢弃缓存的块（切换题目时调用） */
+  reset: () => void;
+} {
+  const MIN_DELAY = 60;
+  const MAX_DELAY = 900;
+
+  const blockCache = new Map<string, string>();
   let pending: string | null = null;
   let timer: number | null = null;
   let streaming = false;
+  let delay = Math.max(MIN_DELAY, opts.delayMs ?? 70);
+  let lastText: string | null = null;
 
-  const paint = () => {
-    if (pending === null) return;
-    const text = pending;
-    const isStreaming = streaming;
-    pending = null;
-    el.innerHTML = renderMarkdown(text) + (isStreaming ? '<span class="caret"></span>' : '');
+  const paintStreaming = (text: string): void => {
+    const blocks = splitBlocks(text);
+    const parts: string[] = [];
+    for (let i = 0; i < blocks.length; i++) {
+      const isLast = i === blocks.length - 1;
+      if (isLast) {
+        // 还在长的那一块每次都重算，通常很短
+        parts.push(renderMarkdown(blocks[i]));
+      } else {
+        let html = blockCache.get(blocks[i]);
+        if (html === undefined) {
+          html = renderMarkdown(blocks[i]);
+          if (blockCache.size > 400) blockCache.clear();
+          blockCache.set(blocks[i], html);
+        }
+        parts.push(html);
+      }
+    }
+    el.innerHTML = `${parts.join('')}<span class="caret"></span>`;
+  };
+
+  const paintFinal = (text: string): void => {
+    el.innerHTML = renderMarkdown(text);
+  };
+
+  const paint = (text: string, live: boolean): void => {
+    const t0 = performance.now();
+    try {
+      if (live) paintStreaming(text);
+      else paintFinal(text);
+    } catch {
+      // 渲染崩了也不能白屏，至少把原文放出来
+      el.textContent = text;
+    }
+    const cost = performance.now() - t0;
+    // 自适应：这次画得慢，下次就少画几次
+    delay = Math.min(MAX_DELAY, Math.max(MIN_DELAY, Math.round(cost * 1.5)));
+    opts.onPaint?.();
+  };
+
+  const schedule = (): void => {
+    if (timer !== null || pending === null) return;
+    timer = window.setTimeout(() => {
+      timer = null;
+      const text = pending;
+      if (text === null) return;
+      const live = streaming;
+      pending = null;
+      if (text === lastText && !live) return;
+      lastText = text;
+      paint(text, live);
+      // 渲染这段时间里可能又攒了新 chunk
+      schedule();
+    }, delay);
   };
 
   return {
     update(text: string, isStreaming = false) {
       pending = text;
       streaming = isStreaming;
-      if (timer !== null) return;
-      timer = window.setTimeout(() => {
-        timer = null;
-        paint();
-      }, delayMs);
+      if (!isStreaming) lastText = null; // 收尾时强制重画一次完整的
+      schedule();
     },
     flush() {
       if (timer !== null) {
-        clearTimeout(timer);
+        window.clearTimeout(timer);
         timer = null;
       }
-      paint();
+      const text = pending;
+      pending = null;
+      if (text === null) return;
+      lastText = text;
+      paint(text, false);
+    },
+    reset() {
+      blockCache.clear();
+      pending = null;
+      lastText = null;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
     },
   };
 }

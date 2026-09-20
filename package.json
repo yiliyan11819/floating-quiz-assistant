@@ -1,6 +1,6 @@
 {
   "name": "float-quiz-helper",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "浮窗刷题助手 — Windows 桌面置顶浮窗，截图/自动读屏调用 DeepSeek 多模态 API 流式解题",
   "main": "dist/main/main.js",
   "author": "float-quiz-helper contributors",

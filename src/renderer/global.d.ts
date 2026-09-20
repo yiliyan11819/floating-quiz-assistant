@@ -13,6 +13,8 @@ export interface SettingsPayload {
   settings: Omit<Settings, 'apiKey'>;
   hasApiKey: boolean;
   redactedKey: string;
+  /** 磁盘上存着 Key 但当前解不开（换了 Windows 账户 / 换过电脑） */
+  keyBroken?: boolean;
 }
 
 export interface AppInfoPayload {
