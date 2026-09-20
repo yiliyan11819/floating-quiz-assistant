@@ -16,12 +16,22 @@ import {
 } from 'electron';
 import path from 'node:path';
 import { Region } from '../shared/types';
+import { transparentOk } from './gpu';
 
 const PRELOAD = path.join(__dirname, '..', 'main', 'preload.js');
 const RENDERER = path.join(__dirname, '..', 'renderer');
 
 function asset(name: string): string {
   return path.join(__dirname, '..', 'assets', name);
+}
+
+/**
+ * 关掉硬件加速时用的不透明底色。
+ * 取值与 common.css 里的 `--bg` 保持一致，这样渲染层把圆角去掉之后
+ * 窗口边缘不会出现色差。
+ */
+function opaqueBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? '#1a1d23' : '#ffffff';
 }
 
 export class WindowManager {
@@ -39,6 +49,10 @@ export class WindowManager {
   /* ------------------------------------------------------------ */
 
   createFloatWindow(bounds: { x: number; y: number; width: number; height: number }, collapsed: boolean): BrowserWindow {
+    // 透明窗口依赖 GPU 合成。软件渲染下强行用 transparent 会得到一块纯黑，
+    // 而浮窗是无边框 + 置顶 + skipTaskbar，变黑就等于是屏幕上多了个关不掉的黑色方块。
+    // 所以关掉硬件加速时改用不透明窗口，并让渲染层去掉圆角。
+    const transparent = transparentOk();
     const win = new BrowserWindow({
       x: bounds.x,
       y: bounds.y,
@@ -47,8 +61,8 @@ export class WindowManager {
       minWidth: 64,
       minHeight: 64,
       frame: false,
-      transparent: true,
-      backgroundColor: '#00000000',
+      transparent,
+      backgroundColor: transparent ? '#00000000' : opaqueBackground(),
       resizable: true,
       maximizable: false,
       minimizable: false,
@@ -72,7 +86,7 @@ export class WindowManager {
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
     win.loadFile(path.join(RENDERER, 'float.html'), {
-      query: { collapsed: collapsed ? '1' : '0' },
+      query: { collapsed: collapsed ? '1' : '0', opaque: transparent ? '0' : '1' },
     });
 
     win.once('ready-to-show', () => {
@@ -139,14 +153,17 @@ export class WindowManager {
 
       const displays = screen.getAllDisplays();
       for (const d of displays) {
+        // 同上：没有 GPU 合成时不能用透明窗口，否则整块屏幕会被画成纯黑，
+        // 这块遮罩还是一屏一个、alwaysOnTop('screen-saver')，等于把显示器糊死。
+        const transparent = transparentOk();
         const win = new BrowserWindow({
           x: d.bounds.x,
           y: d.bounds.y,
           width: d.bounds.width,
           height: d.bounds.height,
           frame: false,
-          transparent: true,
-          backgroundColor: '#00000000',
+          transparent,
+          backgroundColor: transparent ? '#00000000' : opaqueBackground(),
           resizable: false,
           movable: false,
           minimizable: false,
@@ -166,8 +183,17 @@ export class WindowManager {
         });
         win.setAlwaysOnTop(true, 'screen-saver');
         win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+        if (!transparent) {
+          // 不透明模式下没法逐像素挖洞，退而求其次：整窗统一半透明，
+          // 桌面依然看得见，框选照样能用（只是少了「选中区域更亮」的对比）。
+          win.setOpacity(0.42);
+        }
         win.loadFile(path.join(RENDERER, 'overlay.html'), {
-          query: { hint: encodeURIComponent(hint), displayId: String(d.id) },
+          query: {
+            hint: encodeURIComponent(hint),
+            displayId: String(d.id),
+            opaque: transparent ? '0' : '1',
+          },
         });
         win.once('ready-to-show', () => {
           win.show();

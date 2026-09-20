@@ -1,8 +1,14 @@
 appId: com.floatquiz.helper
-# 只影响 exe 文件名、Windows 文件属性里的「产品名称」和 NSIS 显示名。
-# 数据目录不受影响 —— 那是 app.getName()，取打包后 package.json 的 name
-# （electron-builder 不会改它），所以始终是 %APPDATA%\float-quiz-helper。
-productName: 浮窗刷题助手
+# ⚠️ 必须是 ASCII，别改成中文。
+# productName 会变成主程序的文件名（win-unpacked/<productName>.exe）。electron-builder
+# 生成 NSIS 脚本时，非 ASCII 的可执行文件名会被弄坏，结果**主程序根本没被打进
+# 免安装 exe 的载荷里**（载荷里只剩 app.asar 和一堆 dll），产物看着有 70 多 MB、
+# 双击却什么都起不来 —— NSIS 启动器解压完找不到可执行文件，静默退出且返回码是 0。
+# 界面上想显示中文，靠窗口标题 / 托盘 tooltip 就够了，不受这里影响。
+#
+# 另外：数据目录不受 productName 影响 —— 那是 app.getName()，取打包后
+# package.json 的 name，electron-builder 不会改它，所以恒为 %APPDATA%\float-quiz-helper。
+productName: FloatQuiz
 copyright: Copyright © 2026 float-quiz-helper contributors
 
 directories:

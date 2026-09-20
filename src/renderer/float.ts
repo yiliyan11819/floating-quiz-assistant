@@ -313,6 +313,8 @@ function setModeUi(m: Mode): void {
 
 async function init(): Promise<void> {
   const q = new URLSearchParams(location.search);
+  // 关掉硬件加速时主进程会改用不透明窗口，这里同步切到降级样式（去圆角）
+  if (q.get('opaque') === '1') document.body.classList.add('opaque');
   const collapsed = q.get('collapsed') === '1';
   applyCollapsed(collapsed);
 

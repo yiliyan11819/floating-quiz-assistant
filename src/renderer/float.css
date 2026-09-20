@@ -456,3 +456,26 @@ footer {
 body.collapsed-mode {
   display: block;
 }
+
+/* ==========================================================================
+   不透明降级模式（body.opaque）
+   ==========================================================================
+   关掉硬件加速时（FLOATQUIZ_DISABLE_GPU=1），Windows 上没法在软件渲染下合成
+   透明通道，`transparent: true` 的窗口会被画成不透明纯黑 —— 浮窗是无边框 +
+   置顶 + skipTaskbar，黑掉就是屏幕上多出一块关不掉的黑色方块。
+   所以这种模式下窗口改成不透明，渲染层必须同步去掉圆角，否则四角会露出窗口底色。
+   窗口底色由主进程按系统深浅色取 --bg 的同值，这里只负责把方形边角收干净。 */
+
+body.opaque #card {
+  border-radius: 0;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* 折叠胶囊：原来是个 54×54 的圆，周围靠窗口透明留白。
+   不透明模式下会露出一圈方形底色，索性让它铺满整个 64×64 窗口。 */
+body.opaque .capsule {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-sm);
+}

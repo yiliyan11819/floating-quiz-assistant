@@ -16,6 +16,7 @@ import crypto from 'node:crypto';
 
 import { Store } from './store';
 import { WindowManager } from './windows';
+import { GPU_DISABLED, transparentOk } from './gpu';
 import { AutoMonitor } from './monitor';
 import { captureRegion, encodeForModel, makeThumb, CapturedFrame } from './capture';
 import { computeDHash } from './dhash';
@@ -42,10 +43,14 @@ if (!gotLock) {
 const isDev = process.argv.includes('--dev');
 
 /*
- * 老显卡驱动 / 远程桌面 / 虚拟机里硬件加速可能直接崩掉，导致浮窗一片黑。
+ * 老显卡驱动 / 远程桌面 / 虚拟机里硬件加速可能直接崩掉（GPU 进程退出），
  * 这类机器可以设环境变量 FLOATQUIZ_DISABLE_GPU=1 走软件渲染。
+ *
+ * ⚠️ 关掉硬件加速会让 `transparent: true` 的窗口变成不透明纯黑
+ * （Windows 上没法在软件渲染下合成透明通道），所以窗口那边会同步切成
+ * 不透明模式，见 gpu.ts 与 windows.ts 的 transparentOk()。
  */
-if (process.env.FLOATQUIZ_DISABLE_GPU === '1' || process.argv.includes('--disable-gpu')) {
+if (GPU_DISABLED) {
   app.disableHardwareAcceleration();
 }
 
@@ -939,16 +944,36 @@ app.whenReady().then(() => {
         }
       }
 
+      const fw = ctrl.windows.floatWin;
       const report = {
-        floatWindow: !!ctrl.windows.floatWin && !ctrl.windows.floatWin.isDestroyed(),
+        floatWindow: !!fw && !fw.isDestroyed(),
         tray: !!ctrl.windows.tray,
         hotkeyRegistered: globalShortcut.isRegistered(ctrl.store.getSettings().hotkey),
         storeEncrypted: encrypted,
         storeRoundTrip: roundTrip,
         keyNotPlaintextOnDisk: noPlaintext,
+        // 窗口模式：硬件加速关掉时不能再用透明窗口（软件渲染下会变纯黑），
+        // 这两个字段用来确认降级是否按预期生效
+        gpuDisabled: GPU_DISABLED,
+        transparentWindows: transparentOk(),
+        floatWindowVisible: !!fw && !fw.isDestroyed() && fw.isVisible(),
+        floatBounds: fw && !fw.isDestroyed() ? fw.getBounds() : null,
         userDataPath: app.getPath('userData'),
       };
       console.log('[smoke]', JSON.stringify(report));
+
+      // Windows 上 GUI 程序没有控制台，console.log 重定向到文件也是空的，
+      // 所以额外写一份 JSON 到临时目录，便于自动化或事后排查。
+      try {
+        fs.writeFileSync(
+          path.join(app.getPath('temp'), 'floatquiz-smoke.json'),
+          JSON.stringify(report, null, 2),
+          'utf8'
+        );
+      } catch (e) {
+        console.error('[smoke] 写报告失败', e);
+      }
+
       const failed = Object.entries(report).filter(([k, v]) => v === false).map(([k]) => k);
       if (failed.length) console.error('[smoke] FAILED:', failed.join(', '));
 

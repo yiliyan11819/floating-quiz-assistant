@@ -135,6 +135,25 @@ function prepareRcedit(archive) {
   return fs.existsSync(RCEDIT);
 }
 
+/**
+ * 校验免安装 exe 的载荷里确实有主程序。
+ *
+ * 为什么需要这一道：如果 productName 含非 ASCII 字符（比如中文），
+ * electron-builder 生成 NSIS 脚本时会把主程序名弄坏，**主程序会被静默漏掉** ——
+ * 载荷里只剩 app.asar 和一堆 dll，产物照样有 70 多 MB，双击却什么都起不来，
+ * 而且 NSIS 启动器返回码还是 0。体积断言查不出这种情况，只能看清单。
+ */
+function payloadHasExe(portable, exeName) {
+  if (!fs.existsSync(SEVEN_ZIP)) return null; // 没工具就不校验
+  const r = spawnSync(SEVEN_ZIP, ['l', '-slt', portable], {
+    encoding: 'utf8',
+    windowsHide: true,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const out = `${r.stdout || ''}${r.stderr || ''}`;
+  return out.split(/\r?\n/).some((l) => l.startsWith('Path = ') && l.trim().endsWith(exeName));
+}
+
 /** 在目录里找第一个匹配的 exe（productName 会变，不能硬编码文件名） */
 function findFile(dir, re) {
   try {
@@ -295,6 +314,16 @@ async function main() {
     log('警告：产物偏小，可能载荷没被打进去，请检查');
     process.exit(1);
   }
+
+  const exeName = path.basename(appExe || '');
+  const hasExe = payloadHasExe(portable, exeName);
+  if (hasExe === false) {
+    log(`✗ 载荷里没有主程序 ${exeName} —— 产物是个起不来的空壳`);
+    log('  最常见原因：electron-builder.yml 的 productName 含非 ASCII 字符（如中文），');
+    log('  请改成纯 ASCII 后重打。');
+    process.exit(1);
+  }
+  if (hasExe === true) log(`✓ 载荷校验通过：内含 ${exeName}`);
 }
 
 main().catch((e) => {
