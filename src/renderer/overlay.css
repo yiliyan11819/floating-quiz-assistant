@@ -1,0 +1,140 @@
+/* ==========================================================================
+   全屏框选遮罩
+   ========================================================================== */
+
+html,
+body {
+  background: transparent;
+  overflow: hidden;
+  height: 100%;
+  cursor: crosshair;
+  user-select: none;
+}
+
+#dim {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 12, 20, 0.42);
+  backdrop-filter: saturate(0.85);
+}
+
+#dim.hidden,
+.sel.hidden,
+.crosshair.hidden,
+.hint.hidden {
+  display: none;
+}
+
+/* 用超大 box-shadow 在压暗层上「挖」出一个洞 */
+.sel {
+  position: fixed;
+  border: 1.5px solid #7c7bff;
+  background: transparent;
+  box-shadow: 0 0 0 9999px rgba(10, 12, 20, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.sel .corner {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #7c7bff;
+  background: #fff;
+  border-radius: 2px;
+}
+
+.corner.tl {
+  left: -5px;
+  top: -5px;
+}
+.corner.tr {
+  right: -5px;
+  top: -5px;
+}
+.corner.bl {
+  left: -5px;
+  bottom: -5px;
+}
+.corner.br {
+  right: -5px;
+  bottom: -5px;
+}
+
+.size-label {
+  position: absolute;
+  right: -1px;
+  bottom: -26px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(20, 22, 34, 0.9);
+  color: #fff;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.size-label.flip {
+  bottom: auto;
+  top: -26px;
+}
+
+.crosshair {
+  position: fixed;
+  background: rgba(124, 123, 255, 0.55);
+  pointer-events: none;
+  z-index: 2;
+}
+
+#crosshairX {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+#crosshairY {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+/* ---------------- 顶部提示 ---------------- */
+
+.hint {
+  position: fixed;
+  left: 50%;
+  top: 42px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: rgba(22, 24, 36, 0.88);
+  color: #f2f3f7;
+  font-size: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  z-index: 10;
+  pointer-events: none;
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+}
+
+.hint-icon {
+  display: inline-flex;
+  color: #a5a4ff;
+}
+
+.hint-key {
+  font-size: 11.5px;
+  color: #b6bac6;
+  border-left: 1px solid rgba(255, 255, 255, 0.18);
+  padding-left: 9px;
+}
+
+body.dragging #dim,
+body.dragging .hint {
+  opacity: 0.9;
+}

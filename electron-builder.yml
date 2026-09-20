@@ -1,0 +1,31 @@
+appId: com.floatquiz.helper
+# 只影响 exe 文件名、Windows 文件属性里的「产品名称」和 NSIS 显示名。
+# 数据目录不受影响 —— 那是 app.getName()，取打包后 package.json 的 name
+# （electron-builder 不会改它），所以始终是 %APPDATA%\float-quiz-helper。
+productName: 浮窗刷题助手
+copyright: Copyright © 2026 float-quiz-helper contributors
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+
+# 运行时不依赖任何 node_modules（主进程与渲染层均已用 esbuild 打包）
+asar: true
+compression: maximum
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: portable
+      arch:
+        - x64
+  artifactName: FloatQuizHelper-${version}-portable.exe
+
+portable:
+  # 免安装：双击即用，运行时不弹 UAC、不写注册表
+  requestExecutionLevel: user
+  unpackDirName: FloatQuizHelper

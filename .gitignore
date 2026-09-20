@@ -1,0 +1,22 @@
+node_modules/
+dist/
+release/
+build/icon.ico
+build/icon.png
+build/tray.png
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+tsconfig.tsbuildinfo
+
+# 打包中间产物（见 scripts/dist.js）
+.dist-step*/
+.codesign-tools/
+.rctest/
+.outdir
+out-*/
+smoke.log
+*.7z

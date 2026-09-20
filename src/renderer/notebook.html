@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:;"
+    />
+    <title>错题本 · 浮窗刷题助手</title>
+    <link rel="stylesheet" href="vendor/katex/katex.min.css" />
+    <link rel="stylesheet" href="common.css" />
+    <link rel="stylesheet" href="page.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="page-head">
+        <h1>错题本</h1>
+        <p class="sub">
+          点收藏或在浮窗里追问过的题会自动收进来。截图与答案都只存在本机。
+        </p>
+      </header>
+
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="搜索题目 / 答案内容…" />
+        <button id="btnExport" class="primary" type="button">导出 Markdown</button>
+        <button id="btnRefresh" class="ghost" type="button">刷新</button>
+        <button id="btnClear" class="ghost danger" type="button">清空</button>
+      </div>
+
+      <p class="hint" id="countHint"></p>
+
+      <div id="list" class="note-list"></div>
+
+      <div id="emptyState" class="empty-state">
+        还没有收藏任何题。<br />
+        在浮窗里对着题目<b>追问</b>一句，就会自动收进这里。
+      </div>
+    </div>
+
+    <script src="notebook.js"></script>
+  </body>
+</html>

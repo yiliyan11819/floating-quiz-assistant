@@ -1,0 +1,28 @@
+{
+  "name": "float-quiz-helper",
+  "version": "1.0.0",
+  "description": "浮窗刷题助手 — Windows 桌面置顶浮窗，截图/自动读屏调用 DeepSeek 多模态 API 流式解题",
+  "main": "dist/main/main.js",
+  "author": "float-quiz-helper contributors",
+  "license": "MIT",
+  "private": false,
+  "scripts": {
+    "build:icon": "node scripts/make-icon.js",
+    "build:ts": "node scripts/build.js",
+    "build": "npm run build:icon && npm run build:ts",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron . --dev",
+    "dist": "npm run build && node scripts/dist.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "dompurify": "^3.2.3",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.2",
+    "katex": "^0.16.19",
+    "marked": "^15.0.4",
+    "typescript": "^5.7.2"
+  }
+}

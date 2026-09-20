@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:;"
+    />
+    <title>设置 · 浮窗刷题助手</title>
+    <link rel="stylesheet" href="common.css" />
+    <link rel="stylesheet" href="page.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="page-head">
+        <h1>设置</h1>
+        <p class="sub">
+          API Key 只保存在本机（Windows 系统级加密），不会上传到任何第三方，也不会写进日志。
+        </p>
+      </header>
+
+      <!-- API -->
+      <section class="card">
+        <h2>API 配置</h2>
+        <div class="row">
+          <label for="apiKey">API Key</label>
+          <div class="field">
+            <div class="input-group">
+              <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+              <button id="toggleKey" class="ghost" type="button">显示</button>
+              <button id="btnClearKey" class="ghost danger" type="button">清除</button>
+            </div>
+            <p class="hint" id="keyHint">还没有填写。到 platform.deepseek.com 申请一个。</p>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="baseUrl">Base URL</label>
+          <div class="field">
+            <input id="baseUrl" type="text" spellcheck="false" />
+            <p class="hint">默认 https://api.deepseek.com。任何 OpenAI 兼容接口都可以填。</p>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="model">模型名</label>
+          <div class="field">
+            <input id="model" type="text" spellcheck="false" />
+            <p class="hint">默认 deepseek-flash（DeepSeek-V4.1-Flash，原生支持图片输入）。</p>
+          </div>
+        </div>
+
+        <div class="row">
+          <label></label>
+          <div class="field inline">
+            <button id="btnTest" class="primary" type="button">测试连接</button>
+            <span id="testResult" class="test-result"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 答案风格 -->
+      <section class="card">
+        <h2>答案风格</h2>
+        <div class="row">
+          <label>风格</label>
+          <div class="field">
+            <div class="radios" id="styleGroup">
+              <label class="radio"><input type="radio" name="style" value="full" /><span>完整解答<em>答案 + 分步解析</em></span></label>
+              <label class="radio"><input type="radio" name="style" value="hint" /><span>只要提示<em>只给 2-3 条思路</em></span></label>
+              <label class="radio"><input type="radio" name="style" value="step" /><span>分步引导<em>一次只给第 1 步</em></span></label>
+              <label class="radio"><input type="radio" name="style" value="custom" /><span>自定义<em>自己写要求</em></span></label>
+            </div>
+          </div>
+        </div>
+        <div class="row" id="customStyleRow">
+          <label for="customStylePrompt">自定义要求</label>
+          <div class="field">
+            <textarea id="customStylePrompt" rows="3" placeholder="例如：用初中生能听懂的话讲，先给结论再解释。"></textarea>
+          </div>
+        </div>
+      </section>
+
+      <!-- 自动模式 -->
+      <section class="card">
+        <h2>自动模式</h2>
+        <div class="row">
+          <label>监控区域</label>
+          <div class="field">
+            <div class="inline">
+              <span id="regionText" class="mono">未设置</span>
+              <button id="btnPickRegion" type="button">框选区域</button>
+              <button id="btnClearRegion" class="ghost" type="button">清除</button>
+            </div>
+            <p class="hint">
+              自动模式只在这个矩形范围内持续读屏。选小一点（只框住题目）更省 token、也更快。
+            </p>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="staticMs">静止阈值</label>
+          <div class="field">
+            <div class="slider-row">
+              <input id="staticMs" type="range" min="300" max="5000" step="100" />
+              <output id="staticMsOut" class="num"></output>
+            </div>
+            <p class="hint">
+              画面连续静止这么久才触发识别。值越大越不容易在视频播放时误触发。
+            </p>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="pollMs">轮询间隔</label>
+          <div class="field">
+            <div class="slider-row">
+              <input id="pollMs" type="range" min="200" max="2000" step="100" />
+              <output id="pollMsOut" class="num"></output>
+            </div>
+            <p class="hint">每多少毫秒截一帧做比对。默认 500ms，几乎不占 CPU。</p>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="hammingThreshold">同题判定阈值</label>
+          <div class="field">
+            <div class="slider-row">
+              <input id="hammingThreshold" type="range" min="0" max="16" step="1" />
+              <output id="hammingThresholdOut" class="num"></output>
+            </div>
+            <p class="hint">感知哈希汉明距离 ≤ 该值就当成同一道题，直接出缓存答案。默认 4。</p>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="cooldownMs">失败冷却</label>
+          <div class="field">
+            <div class="slider-row">
+              <input id="cooldownMs" type="range" min="5000" max="120000" step="5000" />
+              <output id="cooldownMsOut" class="num"></output>
+            </div>
+            <p class="hint">识别失败后，同一画面这段时间内不再重试，避免连续烧钱。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 图片与成本 -->
+      <section class="card">
+        <h2>图片与成本</h2>
+        <div class="row">
+          <label for="maxEdge">长边上限</label>
+          <div class="field">
+            <div class="slider-row">
+              <input id="maxEdge" type="range" min="0" max="2560" step="160" />
+              <output id="maxEdgeOut" class="num"></output>
+            </div>
+            <p class="hint">
+              送模型前先把截图长边压到这个值（0 = 不压缩）。每张图最多折算 1024 输入 token，
+              裁剪 + 压缩能明显降延迟。
+            </p>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="jpegQuality">JPEG 质量</label>
+          <div class="field">
+            <div class="slider-row">
+              <input id="jpegQuality" type="range" min="40" max="100" step="5" />
+              <output id="jpegQualityOut" class="num"></output>
+            </div>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="imageDetail">图片清晰度</label>
+          <div class="field">
+            <select id="imageDetail">
+              <option value="high">high · 最准（推荐）</option>
+              <option value="auto">auto · 由服务端决定</option>
+              <option value="low">low · 先缩到 512×512，最省</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- 交互 -->
+      <section class="card">
+        <h2>交互</h2>
+        <div class="row">
+          <label for="hotkey">框选热键</label>
+          <div class="field">
+            <div class="inline">
+              <input id="hotkey" type="text" readonly placeholder="点击后按下想用的组合键" />
+              <button id="btnResetHotkey" class="ghost" type="button">恢复默认</button>
+            </div>
+            <p class="hint">点一下输入框，然后按下组合键（至少带一个 Ctrl / Alt / Shift）。</p>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="opacity">浮窗不透明度</label>
+          <div class="field">
+            <div class="slider-row">
+              <input id="opacity" type="range" min="40" max="100" step="5" />
+              <output id="opacityOut" class="num"></output>
+            </div>
+          </div>
+        </div>
+
+        <div class="row">
+          <label>其他</label>
+          <div class="field">
+            <label class="check"><input type="checkbox" id="autoStart" /><span>开机自动启动</span></label>
+            <label class="check"><input type="checkbox" id="autoCollectAsked" /><span>追问过的题自动收进错题本</span></label>
+          </div>
+        </div>
+      </section>
+
+      <!-- 高级 -->
+      <section class="card">
+        <h2>高级</h2>
+        <div class="row">
+          <label for="extraBody">额外请求参数</label>
+          <div class="field">
+            <textarea
+              id="extraBody"
+              rows="3"
+              spellcheck="false"
+              placeholder='例如 {"temperature": 0.3} 或 {"thinking": {"type": "disabled"}}'
+            ></textarea>
+            <p class="hint">
+              会原样并入请求体 JSON。留空即可。填错会导致请求失败，出错时清空这里。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 数据 -->
+      <section class="card">
+        <h2>本地数据</h2>
+        <div class="row">
+          <label>答案缓存</label>
+          <div class="field inline">
+            <span id="cacheCount" class="mono">0 条</span>
+            <button id="btnClearCache" class="ghost" type="button">清空缓存</button>
+          </div>
+        </div>
+        <div class="row">
+          <label>错题本</label>
+          <div class="field inline">
+            <span id="noteCount" class="mono">0 条</span>
+            <button id="btnOpenNotebook" class="ghost" type="button">打开错题本</button>
+            <button id="btnClearNotebook" class="ghost danger" type="button">清空错题本</button>
+          </div>
+        </div>
+        <div class="row">
+          <label>数据目录</label>
+          <div class="field inline">
+            <span id="dataPath" class="mono ellipsis"></span>
+            <button id="btnOpenData" class="ghost" type="button">打开</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>关于</h2>
+        <div class="row">
+          <label>版本</label>
+          <div class="field">
+            <p class="mono" id="aboutVersion">—</p>
+            <p class="hint" id="aboutPlatform"></p>
+          </div>
+        </div>
+        <div class="row">
+          <label></label>
+          <div class="field inline">
+            <button id="btnResetAll" class="ghost danger" type="button">恢复默认设置（保留 API Key）</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script src="settings.js"></script>
+  </body>
+</html>
