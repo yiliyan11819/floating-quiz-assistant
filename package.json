@@ -13,6 +13,7 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "dist": "npm run build && node scripts/dist.js",
+    "shots": "npm run build:ts && electron scripts/make-screenshot.js",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

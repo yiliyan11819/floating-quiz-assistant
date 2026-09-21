@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="build/icon.png" width="96" alt="浮窗刷题助手">
+<img src="docs/icon.png" width="96" alt="浮窗刷题助手">
 
 # 浮窗刷题助手
 
@@ -16,8 +16,24 @@
 
 ---
 
+## 长这样
+
+<div align="center">
+
+<img src="docs/screenshot-float.png" width="340" alt="浮窗正在流式作答，公式正常渲染">
+&nbsp;&nbsp;
+<img src="docs/screenshot-region.png" width="490" alt="框选任意区域：冻结画面后拖拽选择">
+
+<br>
+<sub>左边是浮窗本体（可拖动、可缩放、可折叠成小胶囊），右边是自由截图模式的框选遮罩</sub>
+
+</div>
+
+---
+
 ## 目录
 
+- [长这样](#长这样)
 - [它能干什么](#它能干什么)
 - [给同学的用法（下载即用）](#给同学的用法下载即用)
 - [API Key 从哪来](#api-key-从哪来)
