@@ -12,6 +12,10 @@
 [![Electron](https://img.shields.io/badge/Electron-33-47848F)](https://electronjs.org)
 [![License](https://img.shields.io/badge/license-MIT-16a34a)](LICENSE)
 
+### [下载免安装版 exe](../../releases/latest)
+
+Windows 10/11 64 位 · 单文件、免安装、双击即用 · 需要自备 DeepSeek API Key
+
 </div>
 
 ---
@@ -193,8 +197,8 @@
 需要 **Node.js 20+** 和 **Windows**。
 
 ```bash
-git clone https://github.com/<你的用户名>/float-quiz-helper.git
-cd float-quiz-helper
+git clone https://github.com/yiliyan11819/floating-quiz-assistant.git
+cd floating-quiz-assistant
 npm install
 ```
 
@@ -230,7 +234,7 @@ npm install
 目录结构：
 
 ```
-float-quiz-helper/
+floating-quiz-assistant/
 ├─ src/
 │  ├─ main/            # 主进程
 │  │  ├─ main.ts       # 应用生命周期、IPC、识别与追问编排
